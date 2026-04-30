@@ -1,0 +1,74 @@
+{
+  "name": "draw.io",
+  "version": "29.6.10-a43",
+  "description": "draw.io desktop",
+  "exports": "./src/main/electron.js",
+  "type": "module",
+  "main": "src/main/electron.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test:seaf-gui": "node ./scripts/gui/run-seaf-terminal-smoke.cjs",
+    "test:seaf-gui:xvfb": "xvfb-run -a npm run test:seaf-gui",
+    "test:seaf-stability": "node ./scripts/seaf-stability-smoke.mjs",
+    "gate:legacy-removal": "node ./scripts/legacy-removal-gate.mjs",
+    "sync": "node ./sync.cjs",
+    "pre-release-win": "node ./verify-seaf-minimal-stage.cjs",
+    "release-win": "electron-builder --config electron-builder-win.json --publish always",
+    "pre-release-win32": "node ./verify-seaf-minimal-stage.cjs",
+    "release-win32": "electron-builder --config electron-builder-win32.json --publish always",
+    "pre-release-win-arm64": "node ./verify-seaf-minimal-stage.cjs",
+    "release-win-arm64": "electron-builder --config electron-builder-win-arm64.json --publish always",
+    "pre-release-appx": "node ./verify-seaf-minimal-stage.cjs",
+    "release-appx": "electron-builder --config electron-builder-appx.json --publish always",
+    "pre-release-linux": "node ./verify-seaf-minimal-stage.cjs",
+    "release-linux": "electron-builder --config electron-builder-linux-mac.json --publish always",
+    "pre-release-linux-local": "node ./verify-seaf-minimal-stage.cjs",
+    "release-linux-local": "electron-builder --config electron-builder-linux-mac.json --publish never",
+    "pre-release-snap": "node ./verify-seaf-minimal-stage.cjs",
+    "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:jgraph/drawio-desktop.git"
+  },
+  "keywords": [
+    "draw.io",
+    "diagram",
+    "flowchart",
+    "UML"
+  ],
+  "author": "JGraph <support@draw.io>",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/jgraph/drawio-desktop/issues"
+  },
+  "homepage": "https://github.com/jgraph/drawio",
+  "dependencies": {
+    "@cantoo/pdf-lib": "^2.6.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "buffer": "^6.0.3",
+    "commander": "^14.0.3",
+    "compression": "^1.8.1",
+    "crc": "^4.3.2",
+    "electron-context-menu": "^4.1.1",
+    "electron-log": "^5.4.3",
+    "electron-progressbar": "^2.2.1",
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.3",
+    "node-pty": "^1.1.0",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@electron/fuses": "^1.8.0",
+    "@electron/notarize": "^3.1.1",
+    "dotenv": "^17.3.1",
+    "electron": "^40.8.4",
+    "electron-builder": "^26.8.1",
+    "quicklookjs": "^1.0.1",
+    "sumchecker": "^3.0.1"
+  }
+}

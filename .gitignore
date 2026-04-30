@@ -1,0 +1,38 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# JavaScript / Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build and cache artifacts
+build/
+dist/
+.cache/
+.tmp/
+.tmp_appdata/
+
+# Local extracted artifacts
+.asar_extract/
+.asar_extract_new/
+
+# Project-specific local modules
+seaf-plugin-runtime/
+

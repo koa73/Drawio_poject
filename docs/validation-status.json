@@ -1,0 +1,9 @@
+{
+  "updatedAt": "2026-04-24T11:55:00.000Z",
+  "checks": {
+    "seafStabilitySmoke": true,
+    "runtimeBuild": true,
+    "linuxDebBuild": true
+  },
+  "notes": "Set by cleanup workflow after successful local validation."
+}

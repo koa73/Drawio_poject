@@ -1,0 +1,8 @@
+.idea
+node_modules
+.project
+/dist/
+/.classpath
+/.settings
+.DS_Store
+.claude/settings.local.json
