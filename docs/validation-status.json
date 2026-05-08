@@ -1,9 +1,16 @@
 {
-  "updatedAt": "2026-04-24T11:55:00.000Z",
+  "updatedAt": "2026-05-08T18:05:00.000Z",
   "checks": {
     "seafStabilitySmoke": true,
     "runtimeBuild": true,
-    "linuxDebBuild": true
+    "linuxDebBuild": true,
+    "editDataUnit": true,
+    "editDataMenuIntegration": true,
+    "editDataIpcContract": true,
+    "addPageScript": true,
+    "addPageUiContract": true,
+    "addPageMirrorUiContract": true,
+    "allAddLayerRouting": true
   },
   "notes": "Set by cleanup workflow after successful local validation."
 }
