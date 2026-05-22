@@ -23,6 +23,7 @@
 - для применения runtime update сохраняется стабильная модель `restart-required`; in-place hot-reload не используется.
 - добавлен режим интерактивного терминала для Python: скрипт с `execution.mode: interactive_terminal` запускается в TTY внутри modal terminal-окна Electron, при этом editor draw.io блокируется overlay до закрытия терминала (демо-скрипты остаются в `seaf-plugin-runtime/python/scripts/examples/`; в поставочном `main_menu.yaml` подключается только **Edit Config**).
 - в главном меню **SEAF** в ship-конфиге остаётся пункт **Edit Config**; демо-команды из каталога `examples/` не регистрируются в `main_menu.yaml` (их можно запускать локально с нужным `PYTHONPATH`).
+- в подменю **SEAF -> P41** реализованы `Export` и `Import`: Export формирует SEAF YAML, Import читает `inputSeafFile` (файл/каталог), сопоставляет `schema+OID` и обновляет данные стенсилов на всех страницах без изменения `schema`/`OID`.
 - Python-скрипты выполняются через интерпретатор, заданный в `SEAF -> Edit Config` (`pythonExecutable` в `env.yaml`); поддерживается путь к бинарнику или к каталогу venv (`.venv`) с авто-резолвом.
 - на первичной установке runtime пытается автоматически выбрать системный Python (`python3`, затем `python`) и сохранить его в `env.yaml`.
 - зависимости из `python/requirements.txt` автоматически устанавливаются в выбранный интерпретатор; при ошибке выводится точная инструкция с командой ручной установки.
@@ -30,7 +31,7 @@
 - добавлен auto-event processor для стенсилов: batch-реакция на `add/remove/reparent` (и `modify` через `Edit Data -> Apply`) по правилам `seaf-plugin-runtime/conf/events.yaml` с вызовом скрытых Python handlers.
 - для ошибок auto-event processor действует правило: всегда логировать, показывать popup только при явном маркере `payload.errorPolicy.userVisible=true` в ответе handler.
 - routing событий в `events.yaml` работает по `rule.schema` в рамках `listId` с поддержкой `exact`, wildcard (`*`) и опционально `schema: all`, а также `execution: sync|async`.
-- для схем `seaf.company.ta.services.dcs` и `seaf.company.ta.services.dc_offices` в `events.yaml` заданы exact-правила: `add` через `seafStencilAllAdd`, `modify` через `seafStencilDataMirrorModify` (`python/scripts/events/data_mirror.py`) для синхронизации данных объектов с одинаковым `OID` на всех страницах текущей диаграммы; перед зеркалированием patch выравнивает пары атрибутов **`title`/`label`** (общий модуль `python/scripts/lib/events/title_label_sync.py`; точечное отключение — `sync_title_with_label: false` в `conf/stencils/config.yaml`). Для остальных `seaf.company.ta.*` в wildcard-правиле зарегистрирован `modify` → `seafStencilLabelTitleSync` (`events/label_title.py`): при расхождении второе поле дописывается через `updateStencilDataBulk` с `suppressStencilEvents: true`, чтобы не зациклить stencil `modify`. Отдельный Python handler для stencil `remove` не регистрируется (события удаления не уходят в скрипты). lifecycle snapshot-сессии Edit Data завершается отложенно при закрытии диалога (`hideDialog` + `setTimeout(0)`), а снимок «до» для SEAF Apply берётся по целевой ячейке из модели до очистки selection, чтобы `modify` не терялся; эмиссия `modify` в stencil event processor сравнивает нормализованные карты атрибутов `dataBefore`/`dataAfter` (а не только `sanitizeForIpc` XML-узла), чтобы изменения полей вроде `address` не отбрасывались до маршрутизации в `data_mirror`.
+- для схем `seaf.company.ta.services.dcs` и `seaf.company.ta.services.dc_offices` в `events.yaml` заданы exact-правила: `add` через `seafStencilAllAdd`, `modify` через `seafStencilDataMirrorModify` (`python/scripts/events/data_mirror.py`) для синхронизации данных объектов с одинаковым `OID` на всех страницах текущей диаграммы; перед зеркалированием patch выравнивает пары атрибутов **`title`/`label`** (общий модуль `python/scripts/lib/events/title_label_sync.py`; точечное отключение — `sync_title_with_label: false` в `conf/stencils/config.yaml`). В payload `modify` для стенсилов с `schema` под префиксом событий в `dataBefore`/`dataAfter` включается **`label`**, а правка подписи на схеме (без сессии Edit Data) может эмитить тот же `modify` — см. `seaf-plugin-runtime/CHANGELOG.md` 0.5.35. Для остальных `seaf.company.ta.*` в wildcard-правиле зарегистрирован `modify` → `seafStencilLabelTitleSync` (`events/label_title.py`): при расхождении второе поле дописывается через `updateStencilDataBulk` с `suppressStencilEvents: true`, чтобы не зациклить stencil `modify`. Отдельный Python handler для stencil `remove` не регистрируется (события удаления не уходят в скрипты). lifecycle snapshot-сессии Edit Data завершается отложенно при закрытии диалога (`hideDialog` + `setTimeout(0)`), а снимок «до» для SEAF Apply берётся по целевой ячейке из модели до очистки selection, чтобы `modify` не терялся; эмиссия `modify` в stencil event processor сравнивает нормализованные карты атрибутов `dataBefore`/`dataAfter` (а не только `sanitizeForIpc` XML-узла), чтобы изменения полей вроде `address` не отбрасывались до маршрутизации в `data_mirror`.
 - синхронизация `data_mirror` выполняется атомарно через runtime-команду `mirrorDataByOidAtomic` (precheck -> snapshot -> apply -> rollback); при ошибке выводится только error с деталями `pageName` и `OID`, success-popup не показывается.
 - назначение `OID` при добавлении фигур выполняется через event-маршруты (`seaf.company.ta.*` и/или explicit `add: seafStencilAllAdd` в exact-правилах для `dcs`/`dc_offices`) и Python handler (без прямого UI-автогенератора); уже непустой `OID` в `data` не переназначается при повторном stencil `add` после reparent/слоя; в stencil-item payload передаётся `currentLayerName`, чтобы не дублировать `moveObjectsToLayer` при `add`, если объект уже на целевом слое; смена родителя в модели эмитится как отдельный `reparent` → `seafStencilReparent`: `reparent.py` пишет в лог полный `event` с флагом `reparentScriptFired` и принудительно запускает schema-based layer-routing через тот же helper `create_layer_commands`, что и `all_add`; команды `moveObjectsToLayer` из Python идут с **`targetMode: "schemaCell"`** (переносится именно schema-ячейка по `objectId`, без подъёма до group-root), при `reparent` слой переустанавливается на конфигурированный, даже если `currentLayerName` уже совпадает с target.
 - канонический OID: `<companyPrefix>.<schemaCode>.<sequence>` (`companyPrefix` из `env.yaml`, `schemaCode` = две последние части `schema`, fallback `unknown`).
@@ -48,6 +49,8 @@
 - контекстная команда `Создать страницу` переведена на Python handler `context_menu/add_page.py`: страница создается по `selection.data.title` (с проверками non-empty и уникальности имени) и после успеха в исходный стенсил проставляется page-link через штатный draw.io API `setLinkForCell`.
 - `Создать страницу` расширена mirror-сценарием: после успешного `createPage + setCellLinkToPage` runtime переключается на новую страницу, ищет mirror-элемент по `schemas.<sourceSchema>.mirror` в `stencils/config.yaml`, вставляет его из библиотеки `SEAF_Р41`, синхронизирует `data` (copy-all) с исходным объектом в ячейку mirror с той же `schema`, что у родителя, и назначает слой через тот же Python layer-routing helper, что используется в `all_add` (без JS schema->layer fallback); неуспех вставки/резолва слоя дает сообщение `Не возможно добавить элемент <mirror> на страницу` и расширенную диагностику в `seaf-plugin.log`.
 - После цепочки `createPage -> setCellLinkToPage` (и при mirror — после `insertStencilFromP41ByTitle -> updateStencilDataBulk -> moveObjectsToLayer`) `add_page` добавляет `assignEmptyOidOnPage`: на новой странице всем объектам с пустым атрибутом `OID` назначаются расчётные значения по правилам генератора из `all_add`.
+- **Tools → Edit Data (bulk, 0.5.69+)**: выбор группы стенсилов по `layer` из `stencils/config.yaml`, табличное редактирование всех объектов выбранной `schema` на всех страницах (Tabulator), учёт `data_lock` / `data_hidden`, Save → `edit_data_apply.py` → `updateStencilDataBulk` + linked-page sync. **Tabulator** поставляется с **desktop** (`drawio-standalone/.../js/vendor/tabulator/`, preload в `ElectronApp.js`); в runtime tarball — только `seaf-bulk-edit-data-module.js` в корне `plugins/`.
+- **Обновить плагин** выкладывает **весь** комплект из `seaf-plugin-runtime.tar.gz` автоматически (без ручного `tar`): `seaf.plugin.js`, `seaf_plugin/**`, **`seaf-bulk-edit-data-module.js`** — см. `applyRuntimeFromExtractRoot` в [`drawio-desktop/src/main/seaf/seafPluginService.js`](drawio-desktop/src/main/seaf/seafPluginService.js).
 
 ## SEAF Extensions Tree
 
@@ -58,10 +61,14 @@ Drawio_poject/
 │  ├─ src/main/electron.js
 │  ├─ src/main/seaf/seafPluginService.js
 │  ├─ verify-seaf-minimal-stage.cjs
+│  ├─ sync.cjs
 │  ├─ electron-builder-linux-mac.json
 │  └─ electron-builder-win.json
+├─ drawio-standalone/   (symlink: drawio-desktop/drawio)
+│  └─ src/main/webapp/js/vendor/tabulator/   ← Tabulator для bulk Edit Data
 └─ seaf-plugin-runtime/
    ├─ plugin/seaf.plugin.js
+   ├─ plugin/seaf-bulk-edit-data-module.js
    ├─ conf/
    │  ├─ plugin.yaml
    │  ├─ main_menu.yaml
@@ -95,7 +102,12 @@ Drawio_poject/
 | Путь | Назначение | Ключевые функции/точки |
 |---|---|---|
 | `drawio-desktop/src/main/electron.js` | Bootstrap runtime, IPC маршрутизация, доступ к runtime-файлам | `ensureSeafRuntimeInstalled()`, `getSeafRuntimeDefaults()`, `getSeafRuntimeTargets()`, `rendererReq` switch |
-| `drawio-desktop/src/main/seaf/seafPluginService.js` | Основная серверная логика SEAF (main-process) | `loadConfig()`, `runCommand()`, `prepareInteractiveTerminalCommand()`, `updateRuntime()`, `runNativeSshRuntimeUpdate()`, `pollJob()`, `cancelJob()` |
+| `drawio-desktop/src/main/seaf/seafPluginService.js` | Основная серверная логика SEAF (main-process) | `loadConfig()`, `runCommand()`, `updateRuntime()`, `applyRuntimeFromExtractRoot()` (deploy `seaf.plugin.js`, `seaf_plugin/**`, `seaf-bulk-edit-data-module.js`) |
+| `drawio-standalone/src/main/webapp/js/vendor/tabulator/` | Tabulator (desktop host) для bulk Edit Data | `tabulator.min.js`, `tabulator.min.css`; preload `ensureSeafTabulatorHost()` в `ElectronApp.js` |
+| `drawio-standalone/src/main/webapp/js/diagramly/ElectronApp.js` | Bootstrap desktop + SEAF plugin load | `ensureSeafTabulatorHost()`, загрузка `seaf.plugin.js` |
+| `seaf-plugin-runtime/plugin/seaf-bulk-edit-data-module.js` | Bulk Edit Data UI (Tabulator table) | `SeafBulkEditData.openBulkEditDataDialog`; lazy-load из `plugins/` |
+| `drawio-desktop/scripts/test-apply-runtime-deploy.mjs` | Contract: update deploy выкладывает bulk-модуль | `applyRuntimeFromExtractRoot` + tarball |
+| `drawio-desktop/scripts/test-runtime-tarball-layout.mjs` | Contract: layout tarball (env.yaml, root artifacts) | — |
 | `drawio-desktop/src/main/seaf/jobMetaUtils.js` | Утилиты оптимизации async-job метаданных | Ограничение размеров `stdout/stderr` в `pollJob` payload (`tail` + size) |
 | `drawio-desktop/verify-seaf-minimal-stage.cjs` | Fail-fast проверка наличия minimal runtime stage перед релизной сборкой desktop | Проверка `release/out/minimal-stage` и обязательных файлов |
 | `drawio-desktop/scripts/gui/seaf-terminal-smoke-main.cjs` | GUI smoke harness для проверки IPC-потока interactive terminal | Тестовый BrowserWindow + mock handlers `getSeafInteractiveTerminalSnapshot/writeSeafInteractiveTerminalInput/resizeSeafInteractiveTerminal` |
@@ -138,8 +150,10 @@ Drawio_poject/
 | Гарантированное обновление plugin entry после restart | Renderer app bootstrap | `drawio-standalone/js/diagramly/ElectronApp.js` | cache-busting `file://...seaf.plugin.js?v=<mtime>` |
 | Нормализация и дедупликация plugins settings | Renderer app bootstrap | `drawio-standalone/js/diagramly/ElectronApp.js` | Сведение `file:///.../seaf.plugin.js?...` к `seaf.plugin.js`, дедуп до `mxSettings.setPlugins()` |
 | Атомарная подмена runtime с rollback | SEAF service | `drawio-desktop/src/main/seaf/seafPluginService.js` | `applyRuntimeFromExtractRoot()` |
+| Deploy всех root-артефактов при update | SEAF service | `seafPluginService.js` | `seaf.plugin.js` + `seaf_plugin/**` + `seaf-bulk-edit-data-module.js` (fail, если архив неполный для нового plugin) |
+| Tools → Edit Data (bulk table) | Renderer + Python | `seaf.plugin.js`, `seaf-bulk-edit-data-module.js`, `main_menu/edit_data_apply.py` | `bulkEditData`, Tabulator host + `loadPluginRootScriptOnce` |
 | Системный пункт меню `Обновить плагин` | Full renderer plugin | `seaf-plugin-runtime/plugin/seaf.plugin.js` | `registerActions()`, `executeSystemUpdate()`, `registerMainMenu()` |
-| Фиксированный порядок пунктов меню SEAF | Full/minimal renderer plugins | `plugin/seaf.plugin.js`, `minimal-runtime/seaf.plugin.js` | Кастомные команды -> `Обновить плагин` -> `SEAF Runtime v...` |
+| Фиксированный порядок пунктов меню SEAF | Full/minimal renderer plugins | `plugin/seaf.plugin.js`, `minimal-runtime/seaf.plugin.js` | Команды с `menu.main.enabled: true` (из YAML) -> `Обновить плагин` -> `SEAF Runtime v...`; подменю только через `menu.main.submenu`/`submenuTitle`; context-only команды (например `seafAddPage`) не попадают в main menu |
 | Защита от устаревшего update asset | SEAF service + runtime config | `drawio-desktop/src/main/seaf/seafPluginService.js`, `*/conf/plugin.yaml` | `update.expectedMinVersion`, валидация версии архива до apply |
 | Явный контракт update-статусов | SEAF service | `drawio-desktop/src/main/seaf/seafPluginService.js` | `payload.status`, `payload.requiresRestart` для `updated/already_up_to_date` |
 | Разделитель между системным и кастомными пунктами меню | Full renderer plugin | `seaf-plugin-runtime/plugin/seaf.plugin.js` | `registerMainMenu()` |
@@ -161,6 +175,9 @@ Drawio_poject/
 | `resizeSeafInteractiveTerminal` | main-process interactive terminal session manager | Resize terminal viewport и PTY (`cols/rows`) | `src/main/seaf/terminal-window.js` |
 | `closeSeafInteractiveTerminalSession` | main-process interactive terminal session manager | Закрытие terminal-session и принудительная остановка процесса при необходимости | `src/main/seaf/terminal-window.js` |
 | `reportSeafInteractiveTerminalRendererEvent` | main-process interactive terminal session manager | Структурированное логирование renderer bootstrap/snapshot ошибок terminal-окна | `src/main/seaf/terminal-window.js` |
+| `getSeafScriptEnvSchema` | `seafPluginService.getSeafScriptEnvSchema(args)` | Загрузка схемы `scriptEnvEditor` из `scripts/*.script_env.yaml` (относительно `conf/`) | `plugin/seaf.plugin.js` |
+| `getSeafScriptEnvDefaults` | `seafPluginService.getSeafScriptEnvDefaults(args)` | Загрузка значений по умолчанию для `persist: scriptDefaults` | `plugin/seaf.plugin.js` |
+| `saveSeafScriptEnvDefaults` | `seafPluginService.saveSeafScriptEnvDefaults(args)` | Сохранение defaults для `scriptEnvEditor` | `plugin/seaf.plugin.js` |
 | `getSeafEnvConfig` | `seafPluginService.getEnvConfig(args)` | Загрузка `env.yaml` и схемы полей для `Edit Config` | `plugin/seaf.plugin.js` |
 | `getSeafEventConfig` | `seafPluginService.getEventConfig(args)` | Загрузка и нормализация `events.yaml` для auto-event processor (`handlers` включают `add`, `remove`, `modify`, **`reparent`**) | `plugin/seaf.plugin.js` |
 | `saveSeafEnvConfig` | `seafPluginService.saveEnvConfig(args)` | Сохранение измененных значений в `env.yaml` | `plugin/seaf.plugin.js` |
@@ -186,14 +203,40 @@ Drawio_poject/
 - Visibility contract: saved library selection (`respect_saved`) has priority over `enabledByDefault`.
 - Init resilience contract: one failing subsystem must not silently break the whole plugin; errors are mandatory in `seaf-plugin.log`.
 - Runtime update safety contract: no partial runtime/plugin state is allowed after failed apply/rename.
+- Runtime update deploy contract: после успешного «Обновить плагин» в `~/.config/draw.io/plugins/` обязаны быть `seaf.plugin.js`, `seaf_plugin/conf/env.yaml`, и (для runtime ≥ 0.5.69) `seaf-bulk-edit-data-module.js`. Пользователь **не** распаковывает tarball вручную.
+
+## Сборка draw.io desktop (Linux amd64)
+
+Порядок для разработчика (см. также [`BASELINE_CHANGES.md`](BASELINE_CHANGES.md), [`prompt.md`](prompt.md)):
+
+1. Собрать runtime и minimal-stage:
+   ```bash
+   bash seaf-plugin-runtime/release/runtime/build-runtime.sh
+   bash seaf-plugin-runtime/release/runtime/build-minimal-runtime.sh
+   ```
+2. Опубликовать `seaf-plugin-runtime/release/out/seaf-plugin-runtime.tar.gz` в git репозитория runtime (иначе «Обновить плагин» на других машинах получит старый архив).
+3. Версия desktop (`29.6.10-aNN`): `cd drawio-desktop && npm run sync` — счётчик берёт **максимум** из `package.json` и `.custom-version-state.json`, затем +1. Явная версия: `node sync.cjs --custom-suffix=a59`.
+4. Собрать **только Linux amd64 deb** (без AppImage/arm64):
+   ```bash
+   cd drawio-desktop
+   npm run release-linux-local
+   ```
+   Артефакт: `drawio-desktop/dist/draw.io-amd64-<version>.deb`
+5. Установить `.deb` или запустить `dist/linux-unpacked/drawio`, затем **SEAF → Обновить плагин** (если runtime в git новее установленного).
+
+Bulk Edit Data требует **и** новый desktop (Tabulator в webapp), **и** актуальный runtime после update.
 
 ## Stability release checklist
 
 - Run runtime build: `seaf-plugin-runtime/release/runtime/build-runtime.sh`.
+- Run tarball layout: `node drawio-desktop/scripts/test-runtime-tarball-layout.mjs`.
+- Run update deploy contract: `node drawio-desktop/scripts/test-apply-runtime-deploy.mjs`.
 - Run stability smoke: `node drawio-desktop/scripts/seaf-stability-smoke.mjs`.
+- Run bulk contract: `cd drawio-desktop && npm run test:edit-data-bulk-contract`.
 - Run desktop GUI smoke: `cd drawio-desktop && npm run test:seaf-gui`.
 - Manual UI check: `More Shapes` contains `SEAF` with `SEAF_Р41` and no `undefined`.
-- Manual update check: after `SEAF -> Обновить плагин`, user values in `env.yaml` remain unchanged.
+- Manual update check: after `SEAF -> Обновить плагин`, user values in `env.yaml` remain unchanged; в `plugins/` есть `seaf-bulk-edit-data-module.js` (для 0.5.69+).
+- Manual bulk Edit Data: **Tools → Edit Data** → таблица → Save без ошибки в `seaf-plugin.log`.
 
 ## Repository publication and upstream sync
 

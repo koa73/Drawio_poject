@@ -145,9 +145,111 @@ mxStencilRegistry.allowEval = false;
 			EditorUi.enableDrafts = draftSaveDelay > 0;
 		}
 
-		//Load desktop plugins
+		// Load desktop plugins.
 		var plugins = (mxSettings.settings != null) ? mxSettings.getPlugins() : null;
 		App.initPluginCallback();
+
+		if (plugins == null)
+		{
+			plugins = [];
+		}
+
+		// Migrate legacy built-in and file-based SEAF plugin paths to runtime plugin path.
+		var normalizedPlugins = [];
+		var normalizedSet = {};
+		var hasRuntimeSeafPlugin = false;
+		for (var p = 0; p < plugins.length; p++)
+		{
+			var pluginEntry = plugins[p];
+			if (typeof pluginEntry !== 'string')
+			{
+				continue;
+			}
+
+			if (pluginEntry.startsWith('file://'))
+			{
+				var plainFileUrl = pluginEntry.split('?')[0].split('#')[0];
+				if (plainFileUrl.toLowerCase().endsWith('/seaf.plugin.js'))
+				{
+					pluginEntry = 'seaf.plugin.js';
+				}
+			}
+
+			if (pluginEntry === './plugins/seaf.plugin.js' ||
+				pluginEntry === 'plugins/seaf.plugin.js' ||
+				pluginEntry === '/plugins/seaf.plugin.js')
+			{
+				if (!hasRuntimeSeafPlugin)
+				{
+					if (!normalizedSet['seaf.plugin.js'])
+					{
+						normalizedPlugins.push('seaf.plugin.js');
+						normalizedSet['seaf.plugin.js'] = true;
+					}
+					hasRuntimeSeafPlugin = true;
+				}
+			}
+			else
+			{
+				if (pluginEntry === 'seaf.plugin.js')
+				{
+					hasRuntimeSeafPlugin = true;
+				}
+				if (!normalizedSet[pluginEntry])
+				{
+					normalizedPlugins.push(pluginEntry);
+					normalizedSet[pluginEntry] = true;
+				}
+			}
+		}
+		plugins = normalizedPlugins;
+
+		// SEAF runtime plugin is external and lives in appData/plugins/seaf.plugin.js.
+		var originalPluginsSnapshot = JSON.stringify((mxSettings.settings != null && Array.isArray(mxSettings.getPlugins())) ?
+			mxSettings.getPlugins() : []);
+		if (!hasRuntimeSeafPlugin)
+		{
+			plugins.push('seaf.plugin.js');
+		}
+		if (mxSettings.settings != null)
+		{
+			var normalizedSnapshot = JSON.stringify(plugins);
+			if (normalizedSnapshot !== originalPluginsSnapshot)
+			{
+				mxSettings.setPlugins(plugins);
+				mxSettings.save();
+			}
+		}
+
+		// SEAF bulk Edit Data: Tabulator is provided by the desktop host (webapp vendor), not runtime tarball.
+		async function ensureSeafTabulatorHost()
+		{
+			if (typeof window.Tabulator === 'function')
+			{
+				return;
+			}
+
+			await new Promise(function(resolve, reject)
+			{
+				var scriptEl = document.createElement('script');
+				scriptEl.type = 'text/javascript';
+				scriptEl.src = 'js/vendor/tabulator/tabulator.min.js';
+				scriptEl.onload = function()
+				{
+					resolve();
+				};
+				scriptEl.onerror = function()
+				{
+					reject(new Error('Failed to load Tabulator host asset (js/vendor/tabulator/tabulator.min.js)'));
+				};
+				document.head.appendChild(scriptEl);
+			});
+
+			if (typeof window.Tabulator !== 'function')
+			{
+				throw new Error('Tabulator host script loaded but window.Tabulator is unavailable');
+			}
+		}
 
 		if (plugins != null && plugins.length > 0)
 		{
@@ -158,34 +260,60 @@ mxStencilRegistry.allowEval = false;
 			}
 			else
 			{
+				try
+				{
+					await ensureSeafTabulatorHost();
+				}
+				catch (eTab)
+				{
+					EditorUi.debug('App.main', 'SEAF Tabulator host preload failed', eTab);
+				}
+
 				for (var i = 0; i < plugins.length; i++)
 				{
 					try
 					{
-						if (plugins[i].indexOf('..') >= 0)
+						var pluginRef = plugins[i];
+						if (pluginRef.indexOf('..') >= 0)
 						{
 							continue;
 						}
-						else if (plugins[i].startsWith('/plugins/'))
+						else if (pluginRef.startsWith('/plugins/'))
 						{
-							plugins[i] = '.' + plugins[i];
+							pluginRef = '.' + pluginRef;
 						}
-						else if (plugins[i].startsWith('plugins/'))
+						else if (pluginRef.startsWith('plugins/'))
 						{
-							plugins[i] = './' + plugins[i];
+							pluginRef = './' + pluginRef;
 						}
 
 						// External plugins in App Data folder (Needs enabling plugins)
-						if (!plugins[i].startsWith('./plugins/'))
+						if (!pluginRef.startsWith('./plugins/'))
 						{
 							let pluginFile = await requestSync({
 								action: 'getPluginFile',
-								plugin: plugins[i]
+								plugin: pluginRef
 							});
 							
 							if (pluginFile != null)
 							{
-								plugins[i] = 'file://' + pluginFile;
+								var cacheBuster = '';
+								try
+								{
+									var stat = await requestSync({
+										action: 'fileStat',
+										file: pluginFile
+									});
+									if (stat != null && Number.isFinite(stat.mtimeMs))
+									{
+										cacheBuster = '?v=' + Math.round(stat.mtimeMs);
+									}
+								}
+								catch (e)
+								{
+									// ignore stat errors and fallback to plain file URL
+								}
+								pluginRef = 'file://' + pluginFile + cacheBuster;
 							}
 							else
 							{
@@ -195,7 +323,7 @@ mxStencilRegistry.allowEval = false;
 
 						try
 						{
-							mxscript(plugins[i]);
+							mxscript(pluginRef);
 						}
 						catch (e)
 						{
@@ -271,46 +399,59 @@ mxStencilRegistry.allowEval = false;
 		menusInit.apply(this, arguments);
 
 		var editorUi = this.editorUi;
-		var actions = editorUi.actions;
-		var seafItems = ['file', 'edit', 'view', 'arrange', 'extras', 'seaf', 'help'];
-
-		// Ensures SEAF top-level menu exists in desktop runtime
-		this.defaultMenuItems = seafItems.filter(function(name)
+		
+		try
 		{
-			return mxUtils.indexOf(editorUi.menus.defaultMenuItems, name) >= 0 ||
-				name == 'seaf';
-		});
+			var seafItems = null;
 
-		if (actions.get('seafDownload') == null)
-		{
-			actions.addAction('seafDownload', function()
+			if (Array.isArray(this.defaultMenuItems))
 			{
-				// Placeholder for future SEAF Download logic
-			});
-		}
-
-		if (actions.get('seafCreateP41') == null)
-		{
-			actions.addAction('seafCreateP41', function()
+				seafItems = this.defaultMenuItems.slice();
+			}
+			else if (typeof this.defaultMenuItems === 'string')
 			{
-				// Placeholder for future SEAF Create P41 logic
-			});
-		}
-
-		if (actions.get('seafUpload') == null)
-		{
-			actions.addAction('seafUpload', function()
+				seafItems = this.defaultMenuItems.split(' ');
+			}
+			else
 			{
-				// Placeholder for future SEAF Upload logic
-			});
-		}
+				seafItems = ['file', 'edit', 'view', 'arrange', 'extras', 'help'];
+			}
 
-		this.put('seaf', new Menu(mxUtils.bind(this, function(menu, parent)
+			// Ensures SEAF top-level menu exists in desktop runtime
+			if (mxUtils.indexOf(seafItems, 'seaf') < 0)
+			{
+				var helpIndex = mxUtils.indexOf(seafItems, 'help');
+
+				if (helpIndex >= 0)
+				{
+					seafItems.splice(helpIndex, 0, 'seaf');
+				}
+				else
+				{
+					seafItems.push('seaf');
+				}
+			}
+
+			this.defaultMenuItems = seafItems;
+
+			this.put('seaf', new Menu(mxUtils.bind(this, function(menu, parent)
+			{
+				// Intentionally empty. SEAF plugin populates this menu dynamically
+				// from external plugin configuration.
+			})));
+		}
+		catch (e)
 		{
-			this.addMenuItem(menu, 'seafDownload', parent, null, null, 'Download');
-			this.addMenuItem(menu, 'seafCreateP41', parent, null, null, 'Create P41');
-			this.addMenuItem(menu, 'seafUpload', parent, null, null, 'Upload');
-		})));
+			// Prevent menu extension errors from breaking app startup
+			try
+			{
+				console.error('SEAF menu init failed', e);
+			}
+			catch (ignored)
+			{
+				// do nothing
+			}
+		}
 		
 		this.put('openRecent', new Menu(function(menu, parent)
 		{

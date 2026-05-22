@@ -117,6 +117,27 @@ Upstream `electron-builder-linux-mac.json` (GitHub raw):
 ]
 ```
 
+### U6) SEAF bulk Edit Data: Tabulator в webapp host (не в runtime tarball)
+Кастом файлы:
+- [`drawio-standalone/src/main/webapp/js/vendor/tabulator/`](drawio-standalone/src/main/webapp/js/vendor/tabulator/) — `tabulator.min.js`, `tabulator.min.css`
+- [`drawio-standalone/src/main/webapp/index.html`](drawio-standalone/src/main/webapp/index.html) — `<link href="js/vendor/tabulator/tabulator.min.css">`
+- [`drawio-standalone/src/main/webapp/js/diagramly/ElectronApp.js`](drawio-standalone/src/main/webapp/js/diagramly/ElectronApp.js) — `ensureSeafTabulatorHost()` до загрузки plugins
+
+**Контракт:**
+- Desktop host предоставляет `window.Tabulator` (путь относительно `codeUrl`, разрешён CSP `script-src 'self'`).
+- Runtime tarball содержит только [`seaf-bulk-edit-data-module.js`](seaf-plugin-runtime/plugin/seaf-bulk-edit-data-module.js) в корне plugins (allowlist: `seaf-bulk-edit-data-module.js` в [`isSeafRuntimePath`](drawio-desktop/src/main/electron.js)).
+- [`build-runtime.sh`](seaf-plugin-runtime/release/runtime/build-runtime.sh): `cp conf/.` → merge (без `conf/conf/`), без Tabulator в `seaf_plugin/conf/vendor/`.
+
+### U7) Runtime update: deploy всех root-артефактов tarball
+Файл: [`drawio-desktop/src/main/seaf/seafPluginService.js`](drawio-desktop/src/main/seaf/seafPluginService.js) — `applyRuntimeFromExtractRoot`.
+
+**Обязательный deploy при «Обновить плагин»** (пользователь ничего не копирует вручную):
+- `plugins/seaf.plugin.js`
+- `plugins/seaf-bulk-edit-data-module.js` (если есть в архиве; для runtime с `loadPluginRootScriptOnce` — обязателен, иначе update fail)
+- `plugins/seaf_plugin/**` (conf, python, runtime, keys)
+
+Temp + rename + rollback для bulk-модуля в том же цикле, что и для `seaf.plugin.js`.
+
 ### 1) Desktop host: загрузка runtime‑плагина без `--enable-plugins`
 Файл: [`drawio-desktop/src/main/electron.js`](drawio-desktop/src/main/electron.js)
 
@@ -245,9 +266,9 @@ Master‑каталог: [`seaf-plugin-runtime/`](seaf-plugin-runtime/)
    - `seaf_plugin/conf/plugin.yaml`
    - `seaf_plugin/python/**`
    - `seaf_plugin/runtime/version.json`
-4. Собрать desktop пакет:
+4. Собрать desktop пакет (только **Linux amd64 deb**, без AppImage/arm64):
    - `npm run sync`
-   - `npm run release-linux-local`
+   - `npm run release-linux-local` (внутри: `--linux deb --x64`)
 5. Smoke‑проверки:
    - Help/About: показывает `v29.6.10-aNN`
    - SEAF меню инициализируется, команды работают
