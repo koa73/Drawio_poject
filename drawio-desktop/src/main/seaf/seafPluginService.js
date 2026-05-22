@@ -918,6 +918,43 @@ function resolveEventConfigPath(configPath, config)
 	return path.isAbsolute(configured) ? configured : path.resolve(path.dirname(configPath), configured);
 }
 
+function resolveStencilConfigPath(configPath)
+{
+	return path.join(path.dirname(configPath), 'stencils', 'config.yaml');
+}
+
+async function readStencilConfigInternal(configPath)
+{
+	const stencilPath = resolveStencilConfigPath(configPath);
+	let parsed = {};
+	try
+	{
+		const raw = await fsProm.readFile(stencilPath, 'utf8');
+		parsed = parseYamlLite(raw);
+	}
+	catch (e)
+	{
+		if (!e || e.code !== 'ENOENT')
+		{
+			throw e;
+		}
+	}
+
+	if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed))
+	{
+		parsed = {};
+	}
+	if (parsed.schemas == null || typeof parsed.schemas !== 'object' || Array.isArray(parsed.schemas))
+	{
+		parsed.schemas = {};
+	}
+
+	return {
+		stencilPath,
+		config: parsed
+	};
+}
+
 function normalizeEventConfig(raw)
 {
 	const source = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
@@ -957,7 +994,7 @@ function normalizeEventConfig(raw)
 		}
 		const handlersSrc = (rule.handlers && typeof rule.handlers === 'object') ? rule.handlers : {};
 		const handlers = {};
-		for (const key of ['add', 'remove', 'modify'])
+		for (const key of ['add', 'remove', 'modify', 'reparent'])
 		{
 			const cmd = typeof handlersSrc[key] === 'string' ? handlersSrc[key].trim() : '';
 			if (cmd.length > 0)
@@ -2506,6 +2543,33 @@ export function createSeafPluginService({getAppDataFolder})
 			return {ok: true};
 		},
 
+		async readRuntimeFile(args)
+		{
+			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
+			const relPath = (typeof args?.relativePath === 'string') ? args.relativePath.trim() : '';
+			if (!relPath)
+			{
+				throw new Error('relativePath is required');
+			}
+
+			const normalized = relPath.replace(/\\/g, '/');
+			if (normalized.startsWith('/') || normalized.includes('..'))
+			{
+				throw new Error(`Unsafe relativePath: ${relPath}`);
+			}
+
+			const confDir = path.dirname(loaded.configPath);
+			const targetPath = path.resolve(confDir, normalized);
+			if (!targetPath.startsWith(confDir + path.sep))
+			{
+				throw new Error(`Path escapes runtime conf directory: ${relPath}`);
+			}
+
+			const encoding = (typeof args?.encoding === 'string' && args.encoding.trim().length > 0) ?
+				args.encoding.trim() : 'utf8';
+			return await fsProm.readFile(targetPath, encoding);
+		},
+
 		async ensurePythonEnvironment(args)
 		{
 			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
@@ -3032,6 +3096,17 @@ export function createSeafPluginService({getAppDataFolder})
 				configPath: loaded.configPath,
 				eventPath: eventCfg.eventPath,
 				events: eventCfg.config
+			};
+		},
+
+		async getStencilConfig(args)
+		{
+			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
+			const stencilCfg = await readStencilConfigInternal(loaded.configPath);
+			return {
+				configPath: loaded.configPath,
+				stencilPath: stencilCfg.stencilPath,
+				stencils: stencilCfg.config
 			};
 		},
 
