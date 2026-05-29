@@ -1,11 +1,4 @@
-# Drawio Project SEAF Extensions
 
-## Пути (договорённости для этого workspace)
-
-- **Каталог проекта (клон репозитория):** `/home/oleg/Drawio_poject/`
-- **Каталог логов SEAF / draw.io («рабочий каталог» для разбора логов, не корень репо):** `/home/oleg/.config/draw.io/plugins/seaf_plugin/logs` — основной файл `seaf-plugin.log`.
-
-Дублируется в [`docs/workspace-paths.md`](docs/workspace-paths.md) и в `.cursor/rules/workspace-paths.mdc` (для Cursor Agent, `alwaysApply: true`).
 
 Этот репозиторий содержит доработки к базовому дистрибутиву draw.io для интеграции SEAF runtime, включая:
 - bootstrap минимального runtime в составе инсталлятора drawio;
