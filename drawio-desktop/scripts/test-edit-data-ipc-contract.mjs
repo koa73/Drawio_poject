@@ -32,7 +32,7 @@ async function main()
 		[serviceSrc, 'async function readStencilConfigInternal(configPath)'],
 		[serviceSrc, 'async getStencilConfig(args)'],
 		[runtimeSrc, "action: 'getSeafStencilConfig'"],
-		[runtimeSrc, "source: (state.features.ipcStencilConfigV2 === true ? 'getSeafStencilConfig' : 'readSeafPluginFile')"],
+		[runtimeSrc, "source: 'getSeafStencilConfig'"],
 		[runtimeSrc, 'function getDataHiddenForSchema(schema)'],
 		[stencilConfigSrc, 'data_hidden:']
 	];

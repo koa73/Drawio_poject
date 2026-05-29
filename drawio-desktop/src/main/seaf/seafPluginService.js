@@ -752,7 +752,280 @@ function classifyBootstrapStderr(stderr)
 	return 'unknown';
 }
 
-async function resolvePythonExecutable({loaded, pythonCfg, source})
+function getManagedVenvDir(configPath)
+{
+	const confDir = path.dirname(configPath);
+	const runtimeDir = path.resolve(confDir, '..');
+	return path.join(runtimeDir, '.venv');
+}
+
+async function resolveFirstWorkingInterpreter(candidates, scriptsRoot)
+{
+	for (const candidate of candidates || [])
+	{
+		if (typeof candidate !== 'string' || candidate.trim().length === 0)
+		{
+			continue;
+		}
+		const probe = await probePythonExecutable(candidate.trim(), scriptsRoot);
+		if (probe.ok)
+		{
+			return candidate.trim();
+		}
+	}
+	return '';
+}
+
+async function ensurePipAvailable({pythonExe, scriptsRoot})
+{
+	const env = buildPythonExecutionEnv({}, scriptsRoot);
+	const pipCheck = await runProcessCapture(pythonExe, ['-m', 'pip', '--version'], {cwd: scriptsRoot, env});
+	if (pipCheck.code === 0)
+	{
+		return {ok: true, stage: 'pip_check'};
+	}
+
+	const ensurePip = await runProcessCapture(pythonExe, ['-m', 'ensurepip', '--upgrade'], {cwd: scriptsRoot, env});
+	if (ensurePip.code === 0)
+	{
+		return {ok: true, stage: 'ensurepip'};
+	}
+
+	const stderrTail = tailLines(ensurePip.stderr || pipCheck.stderr || ensurePip.stdout || pipCheck.stdout, 25, 2500);
+	const category = classifyBootstrapStderr(stderrTail);
+	throw new Error(`python_bootstrap_failed:missing_pip:pip_unavailable_for_${pythonExe}:${category}:${stderrTail}`);
+}
+
+async function ensureVirtualenvAvailable({basePython, scriptsRoot})
+{
+	const env = buildPythonExecutionEnv({}, scriptsRoot);
+	const check = await runProcessCapture(basePython, ['-m', 'virtualenv', '--version'], {cwd: scriptsRoot, env});
+	if (check.code === 0)
+	{
+		return {ok: true, stage: 'virtualenv_ready'};
+	}
+
+	const install = await runProcessCapture(basePython, ['-m', 'pip', 'install', '--user', 'virtualenv'], {cwd: scriptsRoot, env});
+	if (install.code === 0)
+	{
+		return {ok: true, stage: 'virtualenv_install'};
+	}
+
+	const stderrTail = tailLines(install.stderr || install.stdout || check.stderr || check.stdout, 25, 2500);
+	const category = classifyBootstrapStderr(stderrTail);
+	throw new Error(`python_bootstrap_failed:virtualenv_install:failed_for_${basePython}:${category}:${stderrTail}`);
+}
+
+async function createManagedVenvWithFallback({basePython, venvDir, scriptsRoot})
+{
+	await fsProm.rm(venvDir, {recursive: true, force: true}).catch(() => {});
+	const env = buildPythonExecutionEnv({}, scriptsRoot);
+
+	const nativeVenv = await runProcessCapture(basePython, ['-m', 'venv', venvDir], {cwd: scriptsRoot, env});
+	if (nativeVenv.code === 0)
+	{
+		return {ok: true, stage: 'venv_created', method: 'venv'};
+	}
+
+	await ensureVirtualenvAvailable({basePython, scriptsRoot});
+	const virtualenvRun = await runProcessCapture(basePython, ['-m', 'virtualenv', venvDir], {cwd: scriptsRoot, env});
+	if (virtualenvRun.code === 0)
+	{
+		return {ok: true, stage: 'venv_created', method: 'virtualenv'};
+	}
+
+	const stderrTail = tailLines(virtualenvRun.stderr || virtualenvRun.stdout || nativeVenv.stderr || nativeVenv.stdout, 25, 2500);
+	const category = classifyBootstrapStderr(stderrTail);
+	throw new Error(`python_bootstrap_failed:venv_create_failed:unable_to_create_managed_venv:${category}:${stderrTail}`);
+}
+
+async function bootstrapPythonRuntimeOnInstallOrUpdate({
+	loaded,
+	source,
+	allowDependencyInstall = true,
+	allowFallback = true,
+	persistFallback = true
+})
+{
+	const envConfig = loaded.envConfig || await readEnvConfigInternal(loaded.configPath, loaded.config);
+	const pythonCfg = resolvePythonRuntimeConfig(loaded.config, loaded.configPath, envConfig);
+	const tried = [];
+
+	const configured = await normalizePythonExecutableCandidates(pythonCfg.configuredExecutable, pythonCfg.scriptsRoot);
+	const configuredCandidates = Array.isArray(configured.candidates) ? configured.candidates : [];
+	const fallbackCandidates = Array.isArray(pythonCfg.fallbackExecutables) ? pythonCfg.fallbackExecutables : [];
+	const candidates = [];
+	for (const row of configuredCandidates.concat(allowFallback ? fallbackCandidates : []))
+	{
+		const next = String(row || '').trim();
+		if (next.length > 0 && !candidates.includes(next))
+		{
+			candidates.push(next);
+		}
+	}
+
+	let basePython = '';
+	for (const candidate of candidates)
+	{
+		tried.push(candidate);
+		const probe = await probePythonExecutable(candidate, pythonCfg.scriptsRoot);
+		if (probe.ok)
+		{
+			basePython = candidate;
+			break;
+		}
+	}
+	if (!basePython)
+	{
+		return {
+			ok: false,
+			code: 'python_bootstrap_failed',
+			stage: 'probe',
+			category: 'interpreter_not_found',
+			error: `No working python interpreter. Tried: ${tried.join(', ') || 'none'}`
+		};
+	}
+
+	const venvDir = getManagedVenvDir(loaded.configPath);
+	let createResult = null;
+	try
+	{
+		createResult = await createManagedVenvWithFallback({basePython, venvDir, scriptsRoot: pythonCfg.scriptsRoot});
+	}
+	catch (e)
+	{
+		return {
+			ok: false,
+			code: 'python_bootstrap_failed',
+			stage: 'venv_create',
+			category: 'venv_create_failed',
+			error: e && e.message ? String(e.message) : String(e)
+		};
+	}
+
+	const venvPython = await resolveFirstWorkingInterpreter(getVenvPythonCandidates(venvDir), pythonCfg.scriptsRoot);
+	if (!venvPython)
+	{
+		return {
+			ok: false,
+			code: 'python_bootstrap_failed',
+			stage: 'venv_interpreter_not_found',
+			category: 'interpreter_not_found',
+			error: `Managed venv created at ${venvDir}, but no interpreter was found`
+		};
+	}
+
+	try
+	{
+		await ensurePipAvailable({pythonExe: venvPython, scriptsRoot: pythonCfg.scriptsRoot});
+	}
+	catch (e)
+	{
+		return {
+			ok: false,
+			code: 'python_bootstrap_failed',
+			stage: 'pip',
+			category: 'missing_pip',
+			error: e && e.message ? String(e.message) : String(e)
+		};
+	}
+
+	let installedRequirements = false;
+	if (allowDependencyInstall)
+	{
+		try
+		{
+			await fsProm.access(pythonCfg.requirementsFile, fs.constants.R_OK);
+			const env = buildPythonExecutionEnv({}, pythonCfg.scriptsRoot);
+			const install = await runProcessCapture(venvPython, ['-m', 'pip', 'install', '-r', pythonCfg.requirementsFile], {
+				cwd: pythonCfg.scriptsRoot,
+				env
+			});
+			if (install.code !== 0)
+			{
+				const stderrTail = tailLines(install.stderr || install.stdout, 25, 2500);
+				return {
+					ok: false,
+					code: 'python_bootstrap_failed',
+					stage: 'pip_install',
+					category: classifyBootstrapStderr(stderrTail),
+					error: stderrTail
+				};
+			}
+			installedRequirements = true;
+		}
+		catch (e)
+		{
+			if (!(e && e.code === 'ENOENT'))
+			{
+				return {
+					ok: false,
+					code: 'python_bootstrap_failed',
+					stage: 'pip_install',
+					category: 'missing_dependency',
+					error: e && e.message ? String(e.message) : String(e)
+				};
+			}
+		}
+	}
+
+	try
+	{
+		await verifyPythonImports({
+			pythonExe: venvPython,
+			scriptsRoot: pythonCfg.scriptsRoot,
+			modules: pythonCfg.requiredModules
+		});
+	}
+	catch (e)
+	{
+		return {
+			ok: false,
+			code: 'python_bootstrap_failed',
+			stage: 'verify_imports',
+			category: 'script_import_error',
+			error: e && e.message ? String(e.message) : String(e)
+		};
+	}
+
+	if (persistFallback)
+	{
+		const saved = await saveEnvConfigInternal(loaded.configPath, loaded.config, {
+			pythonExecutable: venvPython
+		});
+		loaded.envConfig = {
+			envPath: saved.envPath,
+			fields: loaded.envConfig ? loaded.envConfig.fields : extractConfigEditorFields(loaded.config),
+			env: saved.env
+		};
+	}
+
+	await writeLog(loaded.logCfg, 'info', 'Python runtime bootstrap completed', {
+		source: source || 'unknown',
+		basePython,
+		venvDir,
+		pythonExecutable: venvPython,
+		stage: createResult && createResult.stage ? createResult.stage : 'venv_created',
+		method: createResult && createResult.method ? createResult.method : 'unknown',
+		installedRequirements,
+		allowDependencyInstall,
+		allowFallback,
+		persistFallback
+	});
+
+	return {
+		ok: true,
+		source: source || 'unknown',
+		stage: 'ready',
+		method: createResult && createResult.method ? createResult.method : 'unknown',
+		basePython,
+		venvDir,
+		pythonExecutable: venvPython,
+		installedRequirements
+	};
+}
+
+async function resolvePythonExecutable({loaded, pythonCfg, source, allowFallback = true, persistFallback = true})
 {
 	if (pythonCfg.configuredExecutable)
 	{
@@ -760,14 +1033,51 @@ async function resolvePythonExecutable({loaded, pythonCfg, source})
 			pythonCfg.configuredExecutable,
 			pythonCfg.scriptsRoot
 		);
+		const triedConfigured = [];
 		for (const candidate of normalized.candidates)
 		{
+			triedConfigured.push(candidate);
 			const probeConfigured = await probePythonExecutable(candidate, pythonCfg.scriptsRoot);
 			if (probeConfigured.ok)
 			{
 				return {
 					pythonExe: candidate,
 					persistDefault: false
+				};
+			}
+		}
+
+		if (allowFallback)
+		{
+			for (const candidate of pythonCfg.fallbackExecutables)
+			{
+				const probeFallback = await probePythonExecutable(candidate, pythonCfg.scriptsRoot);
+				if (!probeFallback.ok)
+				{
+					continue;
+				}
+				let saved = null;
+				if (persistFallback)
+				{
+					saved = await saveEnvConfigInternal(loaded.configPath, loaded.config, {
+						pythonExecutable: candidate
+					});
+					loaded.envConfig = {
+						envPath: saved.envPath,
+						fields: loaded.envConfig ? loaded.envConfig.fields : extractConfigEditorFields(loaded.config),
+						env: saved.env
+					};
+				}
+				await writeLog(loaded.logCfg, 'warn', 'Configured python executable is stale; fallback interpreter selected', {
+					source: source || 'unknown',
+					configuredExecutable: pythonCfg.configuredExecutable,
+					pythonExecutable: candidate,
+					persisted: persistFallback === true,
+					triedConfigured
+				});
+				return {
+					pythonExe: candidate,
+					persistDefault: persistFallback === true && !!saved
 				};
 			}
 		}
@@ -994,7 +1304,7 @@ function normalizeEventConfig(raw)
 		}
 		const handlersSrc = (rule.handlers && typeof rule.handlers === 'object') ? rule.handlers : {};
 		const handlers = {};
-		for (const key of ['add', 'remove', 'modify', 'reparent'])
+		for (const key of ['add', 'remove', 'modify', 'reparent', 'connect', 'disconnect'])
 		{
 			const cmd = typeof handlersSrc[key] === 'string' ? handlersSrc[key].trim() : '';
 			if (cmd.length > 0)
@@ -2228,27 +2538,39 @@ async function pickExtractRoot(extractDir)
 	return extractDir;
 }
 
-async function applyRuntimeFromExtractRoot(extractRoot, pluginsDir)
+export async function applyRuntimeFromExtractRoot(extractRoot, pluginsDir)
 {
 	const sourcePluginFile = path.join(extractRoot, 'seaf.plugin.js');
+	const sourceBulkModuleFile = path.join(extractRoot, 'seaf-bulk-edit-data-module.js');
 	const sourceRuntimeDir = path.join(extractRoot, 'seaf_plugin');
 	const targetPluginFile = path.join(pluginsDir, 'seaf.plugin.js');
+	const targetBulkModuleFile = path.join(pluginsDir, 'seaf-bulk-edit-data-module.js');
 	const targetRuntimeDir = path.join(pluginsDir, 'seaf_plugin');
 	const sourceEnvFile = path.join(sourceRuntimeDir, 'conf', 'env.yaml');
+	const sourceBulkExists = fs.existsSync(sourceBulkModuleFile);
 
 	await fsProm.access(sourcePluginFile, fs.constants.R_OK);
 	await fsProm.access(sourceRuntimeDir, fs.constants.R_OK);
 	await fsProm.access(sourceEnvFile, fs.constants.R_OK);
+	if (!sourceBulkExists)
+	{
+		throw new Error(`Runtime archive is missing required file: ${sourceBulkModuleFile}`);
+	}
 
 	const tempPluginFile = path.join(pluginsDir, `.seaf.plugin.js.new-${randomUUID()}`);
+	const tempBulkModuleFile = path.join(pluginsDir, `.seaf-bulk-edit-data-module.js.new-${randomUUID()}`);
 	const tempRuntimeDir = path.join(pluginsDir, `.seaf_plugin.new-${randomUUID()}`);
 	const backupPluginFile = path.join(pluginsDir, `.seaf.plugin.js.bak-${randomUUID()}`);
+	const backupBulkModuleFile = path.join(pluginsDir, `.seaf-bulk-edit-data-module.js.bak-${randomUUID()}`);
 	const backupRuntimeDir = path.join(pluginsDir, `.seaf_plugin.bak-${randomUUID()}`);
 	let hadPluginBefore = false;
+	let hadBulkModuleBefore = false;
 	let hadRuntimeBefore = false;
 	let localEnvPath = null;
+	let migratedVenv = false;
 
 	await fsProm.copyFile(sourcePluginFile, tempPluginFile);
+	await fsProm.copyFile(sourceBulkModuleFile, tempBulkModuleFile);
 	await fsProm.cp(sourceRuntimeDir, tempRuntimeDir, {recursive: true, force: true});
 
 	try
@@ -2258,8 +2580,14 @@ async function applyRuntimeFromExtractRoot(extractRoot, pluginsDir)
 			hadPluginBefore = true;
 			await fsProm.rename(targetPluginFile, backupPluginFile);
 		}
+		if (fs.existsSync(targetBulkModuleFile))
+		{
+			hadBulkModuleBefore = true;
+			await fsProm.rename(targetBulkModuleFile, backupBulkModuleFile);
+		}
 
 		await fsProm.rename(tempPluginFile, targetPluginFile);
+		await fsProm.rename(tempBulkModuleFile, targetBulkModuleFile);
 
 		if (fs.existsSync(targetRuntimeDir))
 		{
@@ -2283,6 +2611,16 @@ async function applyRuntimeFromExtractRoot(extractRoot, pluginsDir)
 		const fields = extractConfigEditorFields(targetConfig);
 		const targetEnvPath = path.join(targetRuntimeDir, 'conf', 'env.yaml');
 		await mergeEnvFileWithSchema(sourceEnvFile, localEnvPath, targetEnvPath, fields);
+		const backupVenvDir = path.join(backupRuntimeDir, '.venv');
+		const targetVenvDir = path.join(targetRuntimeDir, '.venv');
+		if (fs.existsSync(backupVenvDir) && !fs.existsSync(targetVenvDir))
+		{
+			await fsProm.cp(backupVenvDir, targetVenvDir, {recursive: true, force: true});
+			migratedVenv = true;
+		}
+		return {
+			migratedVenv
+		};
 	}
 	catch (e)
 	{
@@ -2300,6 +2638,18 @@ async function applyRuntimeFromExtractRoot(extractRoot, pluginsDir)
 			else if (!hadPluginBefore && fs.existsSync(targetPluginFile))
 			{
 				await fsProm.rm(targetPluginFile, {force: true});
+			}
+			if (fs.existsSync(backupBulkModuleFile))
+			{
+				if (fs.existsSync(targetBulkModuleFile))
+				{
+					await fsProm.rm(targetBulkModuleFile, {force: true});
+				}
+				await fsProm.rename(backupBulkModuleFile, targetBulkModuleFile);
+			}
+			else if (!hadBulkModuleBefore && fs.existsSync(targetBulkModuleFile))
+			{
+				await fsProm.rm(targetBulkModuleFile, {force: true});
 			}
 		}
 		catch (rollbackErr)
@@ -2333,8 +2683,10 @@ async function applyRuntimeFromExtractRoot(extractRoot, pluginsDir)
 	{
 		// Always cleanup leftovers.
 		await fsProm.rm(tempPluginFile, {force: true}).catch(() => {});
+		await fsProm.rm(tempBulkModuleFile, {force: true}).catch(() => {});
 		await fsProm.rm(tempRuntimeDir, {recursive: true, force: true}).catch(() => {});
 		await fsProm.rm(backupPluginFile, {force: true}).catch(() => {});
+		await fsProm.rm(backupBulkModuleFile, {force: true}).catch(() => {});
 		await fsProm.rm(backupRuntimeDir, {recursive: true, force: true}).catch(() => {});
 	}
 }
@@ -2478,7 +2830,22 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 		}
 
 		reportProgress(80, 'apply', 'Применение новой версии runtime');
-		await applyRuntimeFromExtractRoot(extractRoot, pluginsDir);
+		const applyInfo = await applyRuntimeFromExtractRoot(extractRoot, pluginsDir);
+		reportProgress(86, 'python_bootstrap', 'Подготовка Python окружения');
+		const pythonBootstrap = await bootstrapPythonRuntimeOnInstallOrUpdate({
+			loaded,
+			source: 'runtime_update',
+			allowDependencyInstall: true,
+			allowFallback: true,
+			persistFallback: true
+		});
+		if (pythonBootstrap && pythonBootstrap.ok !== true)
+		{
+			await writeLog(loaded.logCfg, 'warn', 'Runtime updated, but Python bootstrap failed', {
+				commandId,
+				pythonBootstrap
+			});
+		}
 		reportProgress(90, 'verification', 'Проверка установленной версии');
 		const installedVersion = await readRuntimeVersionFromDir(path.join(pluginsDir, 'seaf_plugin', 'runtime'));
 		const finalVersion = installedVersion || newVersion || beforeVersion || 'unknown';
@@ -2500,6 +2867,10 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 				status: 'updated',
 				requiresRestart: true,
 				version: finalVersion,
+				pythonBootstrap,
+				runtimeApply: {
+					migratedVenv: !!(applyInfo && applyInfo.migratedVenv)
+				},
 				source: {
 					mode: 'ssh_git',
 					repoSsh,
@@ -2621,6 +2992,46 @@ export function createSeafPluginService({getAppDataFolder})
 				}
 				throw new Error(`[${topCategory}/${subCategory}] ${userMessage}${hint}`);
 			}
+		},
+
+		async bootstrapPythonRuntime(args)
+		{
+			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
+			const options = {
+				allowDependencyInstall: false,
+				allowFallback: false,
+				persistFallback: false
+			};
+			if (args && typeof args === 'object')
+			{
+				if (args.allowDependencyInstall === true)
+				{
+					options.allowDependencyInstall = true;
+				}
+				if (args.allowFallback === true)
+				{
+					options.allowFallback = true;
+				}
+				if (args.persistFallback === true)
+				{
+					options.persistFallback = true;
+				}
+			}
+			const pythonBootstrap = await bootstrapPythonRuntimeOnInstallOrUpdate({
+				loaded,
+				source: args?.source || 'manual_bootstrap',
+				allowDependencyInstall: options.allowDependencyInstall,
+				allowFallback: options.allowFallback,
+				persistFallback: options.persistFallback
+			});
+			if (pythonBootstrap && pythonBootstrap.ok !== true)
+			{
+				await writeLog(loaded.logCfg, 'warn', 'Python runtime bootstrap finished with error', {
+					source: args?.source || 'manual_bootstrap',
+					pythonBootstrap
+				});
+			}
+			return pythonBootstrap;
 		},
 
 		async runCommand(args)

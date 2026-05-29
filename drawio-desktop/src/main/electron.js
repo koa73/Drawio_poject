@@ -4101,6 +4101,9 @@ ipcMain.on("rendererReq", async (event, args) =>
 		case 'ensureSeafPythonEnv':
 			ret = await seafPluginService.ensurePythonEnvironment(args);
 			break;
+		case 'bootstrapSeafPythonRuntime':
+			ret = await seafPluginService.bootstrapPythonRuntime(args);
+			break;
 		case 'startSeafManualIndicator':
 			ret = seafPluginService.startManualIndicator(args);
 			break;
@@ -4112,6 +4115,9 @@ ipcMain.on("rendererReq", async (event, args) =>
 			break;
 		case 'getSeafEventConfig':
 			ret = await seafPluginService.getEventConfig(args);
+			break;
+		case 'getSeafStencilConfig':
+			ret = await seafPluginService.getStencilConfig(args);
 			break;
 		case 'saveSeafEnvConfig':
 			ret = await seafPluginService.saveEnvConfig(args);
