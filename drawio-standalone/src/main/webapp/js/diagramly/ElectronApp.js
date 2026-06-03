@@ -11,6 +11,41 @@ EditorUi.draftSaveDelay = 5000;
 //Disables eval for JS (uses shapes-14-6-5.min.js)
 mxStencilRegistry.allowEval = false;
 
+function ensureSeafTabulatorHost()
+{
+	try
+	{
+		if (window.Tabulator == null)
+		{
+			var tabulatorScript = document.createElement('script');
+			tabulatorScript.type = 'text/javascript';
+			tabulatorScript.src = 'js/vendor/tabulator/tabulator.min.js';
+			document.head.appendChild(tabulatorScript);
+		}
+
+		if (document.getElementById('seaf-tabulator-host-css') == null)
+		{
+			var tabulatorCss = document.createElement('link');
+			tabulatorCss.id = 'seaf-tabulator-host-css';
+			tabulatorCss.rel = 'stylesheet';
+			tabulatorCss.type = 'text/css';
+			tabulatorCss.href = 'js/vendor/tabulator/tabulator.min.css';
+			document.head.appendChild(tabulatorCss);
+		}
+	}
+	catch (e)
+	{
+		try
+		{
+			console.warn('SEAF Tabulator host preload failed', e);
+		}
+		catch (ignored)
+		{
+			// no-op
+		}
+	}
+}
+
 (async function()
 {
 	let requestSync = async function(msg)
@@ -136,6 +171,8 @@ mxStencilRegistry.allowEval = false;
 	
 	App.main = async function()
 	{
+		ensureSeafTabulatorHost();
+
 		// Set AutoSave delay
 		var draftSaveDelay = mxSettings.getDraftSaveDelay();
 		

@@ -1503,6 +1503,56 @@ async function readEventConfigInternal(configPath, config)
 	};
 }
 
+function resolveRuntimeConfFilePath(configPath, relativePath)
+{
+	const relPath = (typeof relativePath === 'string') ? relativePath.trim() : '';
+	if (!relPath)
+	{
+		throw new Error('relativePath is required');
+	}
+	const normalized = relPath.replace(/\\/g, '/');
+	if (normalized.startsWith('/') || normalized.includes('..'))
+	{
+		throw new Error(`Unsafe relativePath: ${relPath}`);
+	}
+	const confDir = path.dirname(configPath);
+	const targetPath = path.resolve(confDir, normalized);
+	if (!targetPath.startsWith(confDir + path.sep))
+	{
+		throw new Error(`Path escapes runtime conf directory: ${relPath}`);
+	}
+	return {
+		confDir,
+		targetPath,
+		normalized
+	};
+}
+
+async function readScriptEnvSchemaInternal(loaded, configFile)
+{
+	const resolved = resolveRuntimeConfFilePath(loaded.configPath, configFile);
+	const schemaRaw = await fsProm.readFile(resolved.targetPath, 'utf8');
+	const schema = parseYamlLite(schemaRaw);
+	const schemaObj = (schema && typeof schema === 'object' && !Array.isArray(schema)) ? schema : {};
+	const fields = Array.isArray(schemaObj.fields) ? schemaObj.fields : [];
+	const defaultsFile = (typeof schemaObj.defaultsFile === 'string') ? schemaObj.defaultsFile.trim() : '';
+	const defaultsResolved = defaultsFile ?
+		resolveRuntimeConfFilePath(loaded.configPath, defaultsFile) : null;
+	return {
+		configFile: resolved.normalized,
+		configPath: resolved.targetPath,
+		title: (typeof schemaObj.title === 'string' && schemaObj.title.trim().length > 0) ?
+			schemaObj.title.trim() : 'Script parameters',
+		persist: (schemaObj.persist === 'global' || schemaObj.persist === 'scriptDefaults') ? schemaObj.persist : 'none',
+		defaultsFile,
+		defaultsPath: defaultsResolved ? defaultsResolved.targetPath : '',
+		mergeGlobalEnv: schemaObj.mergeGlobalEnv !== false,
+		fields,
+		dialogHeight: Number.isFinite(schemaObj.dialogHeight) ? Number(schemaObj.dialogHeight) : undefined,
+		formBodyMaxHeight: Number.isFinite(schemaObj.formBodyMaxHeight) ? Number(schemaObj.formBodyMaxHeight) : undefined
+	};
+}
+
 function toYamlScalar(value)
 {
 	if (typeof value === 'string')
@@ -3078,28 +3128,89 @@ export function createSeafPluginService({getAppDataFolder})
 		async readRuntimeFile(args)
 		{
 			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
-			const relPath = (typeof args?.relativePath === 'string') ? args.relativePath.trim() : '';
-			if (!relPath)
-			{
-				throw new Error('relativePath is required');
-			}
-
-			const normalized = relPath.replace(/\\/g, '/');
-			if (normalized.startsWith('/') || normalized.includes('..'))
-			{
-				throw new Error(`Unsafe relativePath: ${relPath}`);
-			}
-
-			const confDir = path.dirname(loaded.configPath);
-			const targetPath = path.resolve(confDir, normalized);
-			if (!targetPath.startsWith(confDir + path.sep))
-			{
-				throw new Error(`Path escapes runtime conf directory: ${relPath}`);
-			}
-
+			const resolved = resolveRuntimeConfFilePath(loaded.configPath, args?.relativePath || '');
 			const encoding = (typeof args?.encoding === 'string' && args.encoding.trim().length > 0) ?
 				args.encoding.trim() : 'utf8';
-			return await fsProm.readFile(targetPath, encoding);
+			return await fsProm.readFile(resolved.targetPath, encoding);
+		},
+
+		async getScriptEnvSchema(args)
+		{
+			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
+			const configFile = (typeof args?.configFile === 'string') ? args.configFile : '';
+			const schema = await readScriptEnvSchemaInternal(loaded, configFile);
+			return {
+				configPath: loaded.configPath,
+				configFile: schema.configFile,
+				title: schema.title,
+				persist: schema.persist,
+				defaultsFile: schema.defaultsFile,
+				mergeGlobalEnv: schema.mergeGlobalEnv,
+				fields: schema.fields,
+				dialogHeight: schema.dialogHeight,
+				formBodyMaxHeight: schema.formBodyMaxHeight
+			};
+		},
+
+		async getScriptEnvDefaults(args)
+		{
+			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
+			const configFile = (typeof args?.configFile === 'string') ? args.configFile : '';
+			const schema = await readScriptEnvSchemaInternal(loaded, configFile);
+			const envConfig = loaded.envConfig || await readEnvConfigInternal(loaded.configPath, loaded.config);
+			if (!schema.defaultsPath)
+			{
+				return {
+					configPath: loaded.configPath,
+					configFile: schema.configFile,
+					defaultsFile: schema.defaultsFile,
+					env: {}
+				};
+			}
+			let defaultsRaw = {};
+			try
+			{
+				const text = await fsProm.readFile(schema.defaultsPath, 'utf8');
+				defaultsRaw = parseYamlLite(text);
+			}
+			catch (e)
+			{
+				if (!(e && e.code === 'ENOENT'))
+				{
+					throw e;
+				}
+			}
+			const env = normalizeEnvFromSchema(defaultsRaw, schema.fields);
+			return {
+				configPath: loaded.configPath,
+				configFile: schema.configFile,
+				defaultsFile: schema.defaultsFile,
+				envPath: schema.defaultsPath,
+				env: env,
+				globalEnvPath: envConfig.envPath
+			};
+		},
+
+		async saveScriptEnvDefaults(args)
+		{
+			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
+			const configFile = (typeof args?.configFile === 'string') ? args.configFile : '';
+			const schema = await readScriptEnvSchemaInternal(loaded, configFile);
+			if (!schema.defaultsPath)
+			{
+				throw new Error(`defaultsFile is not configured for ${schema.configFile}`);
+			}
+			const safeEnv = asPlainObject(args?.env);
+			const normalized = normalizeEnvFromSchema(safeEnv, schema.fields);
+			await fsProm.mkdir(path.dirname(schema.defaultsPath), {recursive: true});
+			await fsProm.writeFile(schema.defaultsPath, stringifyFlatYaml(normalized), 'utf8');
+			return {
+				configPath: loaded.configPath,
+				configFile: schema.configFile,
+				defaultsFile: schema.defaultsFile,
+				envPath: schema.defaultsPath,
+				env: normalized
+			};
 		},
 
 		async ensurePythonEnvironment(args)

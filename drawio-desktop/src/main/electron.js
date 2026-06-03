@@ -100,6 +100,7 @@ let appZoom = 1;
 let isGoogleFontsEnabled = store != null ? (store.get('isGoogleFontsEnabled') != null? store.get('isGoogleFontsEnabled') : false) : false;
 const seafRuntimeDefaultsDir = path.join(appBaseDir, 'seaf-runtime-default');
 const seafPluginFileName = 'seaf.plugin.js';
+const seafBulkEditDataModuleFileName = 'seaf-bulk-edit-data-module.js';
 const seafRuntimeDirName = 'seaf_plugin';
 const seafTerminalWindowHtmlPath = path.join(__dirname, 'seaf', 'terminal-window.html');
 const seafTerminalPreloadPath = path.join(__dirname, 'seaf', 'terminal-preload.js');
@@ -2981,6 +2982,7 @@ function isSeafRuntimePath(requestPath)
 	}
 
 	return normalized === seafPluginFileName ||
+		normalized === seafBulkEditDataModuleFileName ||
 		normalized.startsWith(seafRuntimeDirName + '/');
 }
 
@@ -4098,6 +4100,9 @@ ipcMain.on("rendererReq", async (event, args) =>
 		case 'writeSeafPluginLog':
 			ret = await seafPluginService.writeClientLog(args);
 			break;
+		case 'readSeafPluginFile':
+			ret = await seafPluginService.readRuntimeFile(args);
+			break;
 		case 'ensureSeafPythonEnv':
 			ret = await seafPluginService.ensurePythonEnvironment(args);
 			break;
@@ -4118,6 +4123,15 @@ ipcMain.on("rendererReq", async (event, args) =>
 			break;
 		case 'getSeafStencilConfig':
 			ret = await seafPluginService.getStencilConfig(args);
+			break;
+		case 'getSeafScriptEnvSchema':
+			ret = await seafPluginService.getScriptEnvSchema(args);
+			break;
+		case 'getSeafScriptEnvDefaults':
+			ret = await seafPluginService.getScriptEnvDefaults(args);
+			break;
+		case 'saveSeafScriptEnvDefaults':
+			ret = await seafPluginService.saveScriptEnvDefaults(args);
 			break;
 		case 'saveSeafEnvConfig':
 			ret = await seafPluginService.saveEnvConfig(args);
