@@ -839,6 +839,18 @@ async function createManagedVenvWithFallback({basePython, venvDir, scriptsRoot})
 	throw new Error(`python_bootstrap_failed:venv_create_failed:unable_to_create_managed_venv:${category}:${stderrTail}`);
 }
 
+function isCandidateInsideManagedVenv(candidate, venvDir, scriptsRoot)
+{
+	const value = String(candidate || '').trim();
+	if (value.length < 1 || !isLikelyPathValue(value))
+	{
+		return false;
+	}
+	const resolvedCandidate = path.resolve(path.isAbsolute(value) ? value : path.resolve(scriptsRoot, value));
+	const resolvedVenvDir = path.resolve(venvDir);
+	return resolvedCandidate === resolvedVenvDir || resolvedCandidate.startsWith(resolvedVenvDir + path.sep);
+}
+
 async function bootstrapPythonRuntimeOnInstallOrUpdate({
 	loaded,
 	source,
@@ -849,7 +861,91 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 {
 	const envConfig = loaded.envConfig || await readEnvConfigInternal(loaded.configPath, loaded.config);
 	const pythonCfg = resolvePythonRuntimeConfig(loaded.config, loaded.configPath, envConfig);
+	const venvDir = getManagedVenvDir(loaded.configPath);
+	const venvDirExists = fs.existsSync(venvDir);
+	let branch = 'create_managed_venv';
+	let selectedBasePython = '';
+	let selectedVenvPython = '';
+	const filteredCandidates = [];
 	const tried = [];
+	let installedRequirements = false;
+
+	if (venvDirExists)
+	{
+		branch = 'existing_managed_venv';
+		selectedVenvPython = await resolveFirstWorkingInterpreter(getVenvPythonCandidates(venvDir), pythonCfg.scriptsRoot);
+		if (selectedVenvPython.length > 0)
+		{
+			try
+			{
+				await ensurePipAvailable({pythonExe: selectedVenvPython, scriptsRoot: pythonCfg.scriptsRoot});
+				await verifyPythonImports({
+					pythonExe: selectedVenvPython,
+					scriptsRoot: pythonCfg.scriptsRoot,
+					modules: pythonCfg.requiredModules
+				});
+				if (persistFallback)
+				{
+					const saved = await saveEnvConfigInternal(loaded.configPath, loaded.config, {
+						pythonExecutable: selectedVenvPython
+					});
+					loaded.envConfig = {
+						envPath: saved.envPath,
+						fields: loaded.envConfig ? loaded.envConfig.fields : extractConfigEditorFields(loaded.config),
+						env: saved.env
+					};
+				}
+				await writeLog(loaded.logCfg, 'info', 'Python runtime bootstrap completed', {
+					source: source || 'unknown',
+					branch,
+					venvDirExists,
+					selectedBasePython,
+					selectedVenvPython,
+					triedCandidates: tried,
+					filteredCandidates,
+					venvDir,
+					pythonExecutable: selectedVenvPython,
+					stage: 'managed_venv_healthcheck',
+					method: 'existing',
+					installedRequirements,
+					allowDependencyInstall,
+					allowFallback,
+					persistFallback
+				});
+				return {
+					ok: true,
+					source: source || 'unknown',
+					stage: 'ready',
+					method: 'existing',
+					branch,
+					basePython: selectedBasePython,
+					venvDir,
+					pythonExecutable: selectedVenvPython,
+					installedRequirements
+				};
+			}
+			catch (e)
+			{
+				await writeLog(loaded.logCfg, 'warn', 'Managed venv health-check failed, recreating environment', {
+					source: source || 'unknown',
+					branch,
+					venvDir,
+					pythonExecutable: selectedVenvPython,
+					error: e && e.message ? String(e.message) : String(e)
+				});
+			}
+		}
+		else
+		{
+			await writeLog(loaded.logCfg, 'warn', 'Managed venv interpreter not found, recreating environment', {
+				source: source || 'unknown',
+				branch,
+				venvDir
+			});
+		}
+		branch = 'create_managed_venv';
+		selectedVenvPython = '';
+	}
 
 	const configured = await normalizePythonExecutableCandidates(pythonCfg.configuredExecutable, pythonCfg.scriptsRoot);
 	const configuredCandidates = Array.isArray(configured.candidates) ? configured.candidates : [];
@@ -858,7 +954,19 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 	for (const row of configuredCandidates.concat(allowFallback ? fallbackCandidates : []))
 	{
 		const next = String(row || '').trim();
-		if (next.length > 0 && !candidates.includes(next))
+		if (next.length < 1)
+		{
+			continue;
+		}
+		if (isCandidateInsideManagedVenv(next, venvDir, pythonCfg.scriptsRoot))
+		{
+			if (!filteredCandidates.includes(next))
+			{
+				filteredCandidates.push(next);
+			}
+			continue;
+		}
+		if (!candidates.includes(next))
 		{
 			candidates.push(next);
 		}
@@ -877,16 +985,33 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 	}
 	if (!basePython)
 	{
+		for (const fallback of ['python3', 'python'])
+		{
+			if (candidates.includes(fallback))
+			{
+				continue;
+			}
+			tried.push(fallback);
+			const probe = await probePythonExecutable(fallback, pythonCfg.scriptsRoot);
+			if (probe.ok)
+			{
+				basePython = fallback;
+				break;
+			}
+		}
+	}
+	if (!basePython)
+	{
 		return {
 			ok: false,
 			code: 'python_bootstrap_failed',
 			stage: 'probe',
 			category: 'interpreter_not_found',
-			error: `No working python interpreter. Tried: ${tried.join(', ') || 'none'}`
+			error: `No working python interpreter. Tried: ${tried.join(', ') || 'none'}. Filtered managed-venv candidates: ${filteredCandidates.join(', ') || 'none'}`
 		};
 	}
+	selectedBasePython = basePython;
 
-	const venvDir = getManagedVenvDir(loaded.configPath);
 	let createResult = null;
 	try
 	{
@@ -903,8 +1028,8 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 		};
 	}
 
-	const venvPython = await resolveFirstWorkingInterpreter(getVenvPythonCandidates(venvDir), pythonCfg.scriptsRoot);
-	if (!venvPython)
+	selectedVenvPython = await resolveFirstWorkingInterpreter(getVenvPythonCandidates(venvDir), pythonCfg.scriptsRoot);
+	if (!selectedVenvPython)
 	{
 		return {
 			ok: false,
@@ -917,7 +1042,7 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 
 	try
 	{
-		await ensurePipAvailable({pythonExe: venvPython, scriptsRoot: pythonCfg.scriptsRoot});
+		await ensurePipAvailable({pythonExe: selectedVenvPython, scriptsRoot: pythonCfg.scriptsRoot});
 	}
 	catch (e)
 	{
@@ -930,14 +1055,13 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 		};
 	}
 
-	let installedRequirements = false;
 	if (allowDependencyInstall)
 	{
 		try
 		{
 			await fsProm.access(pythonCfg.requirementsFile, fs.constants.R_OK);
 			const env = buildPythonExecutionEnv({}, pythonCfg.scriptsRoot);
-			const install = await runProcessCapture(venvPython, ['-m', 'pip', 'install', '-r', pythonCfg.requirementsFile], {
+			const install = await runProcessCapture(selectedVenvPython, ['-m', 'pip', 'install', '-r', pythonCfg.requirementsFile], {
 				cwd: pythonCfg.scriptsRoot,
 				env
 			});
@@ -972,7 +1096,7 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 	try
 	{
 		await verifyPythonImports({
-			pythonExe: venvPython,
+			pythonExe: selectedVenvPython,
 			scriptsRoot: pythonCfg.scriptsRoot,
 			modules: pythonCfg.requiredModules
 		});
@@ -991,7 +1115,7 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 	if (persistFallback)
 	{
 		const saved = await saveEnvConfigInternal(loaded.configPath, loaded.config, {
-			pythonExecutable: venvPython
+			pythonExecutable: selectedVenvPython
 		});
 		loaded.envConfig = {
 			envPath: saved.envPath,
@@ -1002,9 +1126,15 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 
 	await writeLog(loaded.logCfg, 'info', 'Python runtime bootstrap completed', {
 		source: source || 'unknown',
+		branch,
+		venvDirExists,
+		selectedBasePython,
+		selectedVenvPython,
+		triedCandidates: tried,
+		filteredCandidates,
 		basePython,
 		venvDir,
-		pythonExecutable: venvPython,
+		pythonExecutable: selectedVenvPython,
 		stage: createResult && createResult.stage ? createResult.stage : 'venv_created',
 		method: createResult && createResult.method ? createResult.method : 'unknown',
 		installedRequirements,
@@ -1018,9 +1148,10 @@ async function bootstrapPythonRuntimeOnInstallOrUpdate({
 		source: source || 'unknown',
 		stage: 'ready',
 		method: createResult && createResult.method ? createResult.method : 'unknown',
+		branch,
 		basePython,
 		venvDir,
-		pythonExecutable: venvPython,
+		pythonExecutable: selectedVenvPython,
 		installedRequirements
 	};
 }
@@ -2998,9 +3129,9 @@ export function createSeafPluginService({getAppDataFolder})
 		{
 			const loaded = await loadConfigInternal(args?.configPath || null, getAppDataFolder);
 			const options = {
-				allowDependencyInstall: false,
-				allowFallback: false,
-				persistFallback: false
+				allowDependencyInstall: true,
+				allowFallback: true,
+				persistFallback: true
 			};
 			if (args && typeof args === 'object')
 			{
