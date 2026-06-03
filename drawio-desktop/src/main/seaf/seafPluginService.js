@@ -2977,6 +2977,31 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 				pythonBootstrap
 			});
 		}
+		let runtimeHealth = {ok: true, stage: 'postcheck'};
+		try
+		{
+			const postcheck = await ensurePythonEnvironmentCached({
+				loaded,
+				source: 'runtime_update_postcheck',
+				force: true
+			});
+			runtimeHealth = Object.assign({ok: true, stage: 'postcheck'}, postcheck || {});
+		}
+		catch (postErr)
+		{
+			const rawPostErr = postErr && postErr.message ? String(postErr.message) : String(postErr);
+			runtimeHealth = {
+				ok: false,
+				stage: 'postcheck',
+				reason: 'python_env_invalid',
+				error: rawPostErr,
+				hint: 'Откройте SEAF → Edit Config и проверьте Python executable, затем выполните Диагностику/Повторить bootstrap.'
+			};
+			await writeLog(loaded.logCfg, 'warn', 'Runtime updated, but Python post-check failed', {
+				commandId,
+				runtimeHealth
+			});
+		}
 		reportProgress(90, 'verification', 'Проверка установленной версии');
 		const installedVersion = await readRuntimeVersionFromDir(path.join(pluginsDir, 'seaf_plugin', 'runtime'));
 		const finalVersion = installedVersion || newVersion || beforeVersion || 'unknown';
@@ -2991,14 +3016,19 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 			}
 		});
 
+		const degraded = !!(runtimeHealth && runtimeHealth.ok === false);
 		return {
 			status: 'success',
-			message: `Версия плагина обновлена до версии ${finalVersion}`,
+			message: degraded ?
+				`Версия плагина обновлена до версии ${finalVersion}, но Python post-check завершился с ошибкой` :
+				`Версия плагина обновлена до версии ${finalVersion}`,
 			payload: {
-				status: 'updated',
+				status: degraded ? 'updated_degraded' : 'updated',
+				degradedMessage: degraded ? 'Плагин обновлен, но проверка Python окружения после обновления не пройдена.' : '',
 				requiresRestart: true,
 				version: finalVersion,
 				pythonBootstrap,
+				runtimeHealth,
 				runtimeApply: {
 					migratedVenv: !!(applyInfo && applyInfo.migratedVenv)
 				},
