@@ -77,5 +77,11 @@
     "electron-builder": "^26.8.1",
     "quicklookjs": "^1.0.1",
     "sumchecker": "^3.0.1"
-  }
+  },
+    "publish": {
+      "provider": "github",
+      "owner": "koa73",
+      "repo": "drawio_seaf_ext",
+      "releaseType": "release"
+    }
 }
