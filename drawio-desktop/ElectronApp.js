@@ -11,6 +11,45 @@ EditorUi.draftSaveDelay = 5000;
 //Disables eval for JS (uses shapes-14-6-5.min.js)
 mxStencilRegistry.allowEval = false;
 
+async function ensureSeafTabulatorHost()
+{
+	if (typeof window.Tabulator === 'function')
+	{
+		return;
+	}
+
+	if (document.getElementById('seaf-tabulator-host-css') == null)
+	{
+		var tabulatorCss = document.createElement('link');
+		tabulatorCss.id = 'seaf-tabulator-host-css';
+		tabulatorCss.rel = 'stylesheet';
+		tabulatorCss.type = 'text/css';
+		tabulatorCss.href = 'js/vendor/tabulator/tabulator.min.css';
+		document.head.appendChild(tabulatorCss);
+	}
+
+	await new Promise(function(resolve, reject)
+	{
+		var tabulatorScript = document.createElement('script');
+		tabulatorScript.type = 'text/javascript';
+		tabulatorScript.src = 'js/vendor/tabulator/tabulator.min.js';
+		tabulatorScript.onload = function()
+		{
+			resolve();
+		};
+		tabulatorScript.onerror = function()
+		{
+			reject(new Error('Failed to load Tabulator host asset (js/vendor/tabulator/tabulator.min.js)'));
+		};
+		document.head.appendChild(tabulatorScript);
+	});
+
+	if (typeof window.Tabulator !== 'function')
+	{
+		throw new Error('Tabulator host script loaded but window.Tabulator is unavailable');
+	}
+}
+
 (async function()
 {
 	let requestSync = async function(msg)
@@ -154,19 +193,38 @@ mxStencilRegistry.allowEval = false;
 			plugins = [];
 		}
 
-		// Migrate legacy built-in SEAF plugin paths to runtime plugin path.
+		// Migrate legacy built-in and file-based SEAF plugin paths to runtime plugin path.
 		var normalizedPlugins = [];
+		var normalizedSet = {};
 		var hasRuntimeSeafPlugin = false;
 		for (var p = 0; p < plugins.length; p++)
 		{
 			var pluginEntry = plugins[p];
+			if (typeof pluginEntry !== 'string')
+			{
+				continue;
+			}
+
+			if (pluginEntry.startsWith('file://'))
+			{
+				var plainFileUrl = pluginEntry.split('?')[0].split('#')[0];
+				if (plainFileUrl.toLowerCase().endsWith('/seaf.plugin.js'))
+				{
+					pluginEntry = 'seaf.plugin.js';
+				}
+			}
+
 			if (pluginEntry === './plugins/seaf.plugin.js' ||
 				pluginEntry === 'plugins/seaf.plugin.js' ||
 				pluginEntry === '/plugins/seaf.plugin.js')
 			{
 				if (!hasRuntimeSeafPlugin)
 				{
-					normalizedPlugins.push('seaf.plugin.js');
+					if (!normalizedSet['seaf.plugin.js'])
+					{
+						normalizedPlugins.push('seaf.plugin.js');
+						normalizedSet['seaf.plugin.js'] = true;
+					}
 					hasRuntimeSeafPlugin = true;
 				}
 			}
@@ -176,25 +234,30 @@ mxStencilRegistry.allowEval = false;
 				{
 					hasRuntimeSeafPlugin = true;
 				}
-				normalizedPlugins.push(pluginEntry);
+				if (!normalizedSet[pluginEntry])
+				{
+					normalizedPlugins.push(pluginEntry);
+					normalizedSet[pluginEntry] = true;
+				}
 			}
 		}
 		plugins = normalizedPlugins;
 
 		// SEAF runtime plugin is external and lives in appData/plugins/seaf.plugin.js.
+		var originalPluginsSnapshot = JSON.stringify((mxSettings.settings != null && Array.isArray(mxSettings.getPlugins())) ?
+			mxSettings.getPlugins() : []);
 		if (!hasRuntimeSeafPlugin)
 		{
 			plugins.push('seaf.plugin.js');
-			if (mxSettings.settings != null)
+		}
+		if (mxSettings.settings != null)
+		{
+			var normalizedSnapshot = JSON.stringify(plugins);
+			if (normalizedSnapshot !== originalPluginsSnapshot)
 			{
 				mxSettings.setPlugins(plugins);
 				mxSettings.save();
 			}
-		}
-		else if (mxSettings.settings != null)
-		{
-			mxSettings.setPlugins(plugins);
-			mxSettings.save();
 		}
 
 		if (plugins != null && plugins.length > 0)
@@ -206,34 +269,60 @@ mxStencilRegistry.allowEval = false;
 			}
 			else
 			{
+				try
+				{
+					await ensureSeafTabulatorHost();
+				}
+				catch (eTab)
+				{
+					EditorUi.debug('App.main', 'SEAF Tabulator host preload failed', eTab);
+				}
+
 				for (var i = 0; i < plugins.length; i++)
 				{
 					try
 					{
-						if (plugins[i].indexOf('..') >= 0)
+						var pluginRef = plugins[i];
+						if (pluginRef.indexOf('..') >= 0)
 						{
 							continue;
 						}
-						else if (plugins[i].startsWith('/plugins/'))
+						else if (pluginRef.startsWith('/plugins/'))
 						{
-							plugins[i] = '.' + plugins[i];
+							pluginRef = '.' + pluginRef;
 						}
-						else if (plugins[i].startsWith('plugins/'))
+						else if (pluginRef.startsWith('plugins/'))
 						{
-							plugins[i] = './' + plugins[i];
+							pluginRef = './' + pluginRef;
 						}
 
 						// External plugins in App Data folder (Needs enabling plugins)
-						if (!plugins[i].startsWith('./plugins/'))
+						if (!pluginRef.startsWith('./plugins/'))
 						{
 							let pluginFile = await requestSync({
 								action: 'getPluginFile',
-								plugin: plugins[i]
+								plugin: pluginRef
 							});
 							
 							if (pluginFile != null)
 							{
-								plugins[i] = 'file://' + pluginFile;
+								var cacheBuster = '';
+								try
+								{
+									var stat = await requestSync({
+										action: 'fileStat',
+										file: pluginFile
+									});
+									if (stat != null && Number.isFinite(stat.mtimeMs))
+									{
+										cacheBuster = '?v=' + Math.round(stat.mtimeMs);
+									}
+								}
+								catch (e)
+								{
+									// ignore stat errors and fallback to plain file URL
+								}
+								pluginRef = 'file://' + pluginFile + cacheBuster;
 							}
 							else
 							{
@@ -243,7 +332,7 @@ mxStencilRegistry.allowEval = false;
 
 						try
 						{
-							mxscript(plugins[i]);
+							mxscript(pluginRef);
 						}
 						catch (e)
 						{

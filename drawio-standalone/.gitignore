@@ -50,3 +50,8 @@ src/main/webapp/WEB-INF/lib/protobuf-java-*.jar
 src/main/webapp/WEB-INF/lib/protobuf-java-util-*.jar
 src/main/webapp/WEB-INF/lib/re2j-*.jar
 src/main/webapp/WEB-INF/lib/threetenbp-*.jar
+
+# SEAF bulk Edit Data: vendored Tabulator must stay in version control.
+src/main/webapp/js/vendor/*
+!src/main/webapp/js/vendor/tabulator/
+!src/main/webapp/js/vendor/tabulator/**

@@ -11,38 +11,42 @@ EditorUi.draftSaveDelay = 5000;
 //Disables eval for JS (uses shapes-14-6-5.min.js)
 mxStencilRegistry.allowEval = false;
 
-function ensureSeafTabulatorHost()
+async function ensureSeafTabulatorHost()
 {
-	try
+	if (typeof window.Tabulator === 'function')
 	{
-		if (window.Tabulator == null)
-		{
-			var tabulatorScript = document.createElement('script');
-			tabulatorScript.type = 'text/javascript';
-			tabulatorScript.src = 'js/vendor/tabulator/tabulator.min.js';
-			document.head.appendChild(tabulatorScript);
-		}
-
-		if (document.getElementById('seaf-tabulator-host-css') == null)
-		{
-			var tabulatorCss = document.createElement('link');
-			tabulatorCss.id = 'seaf-tabulator-host-css';
-			tabulatorCss.rel = 'stylesheet';
-			tabulatorCss.type = 'text/css';
-			tabulatorCss.href = 'js/vendor/tabulator/tabulator.min.css';
-			document.head.appendChild(tabulatorCss);
-		}
+		return;
 	}
-	catch (e)
+
+	if (document.getElementById('seaf-tabulator-host-css') == null)
 	{
-		try
+		var tabulatorCss = document.createElement('link');
+		tabulatorCss.id = 'seaf-tabulator-host-css';
+		tabulatorCss.rel = 'stylesheet';
+		tabulatorCss.type = 'text/css';
+		tabulatorCss.href = 'js/vendor/tabulator/tabulator.min.css';
+		document.head.appendChild(tabulatorCss);
+	}
+
+	await new Promise(function(resolve, reject)
+	{
+		var tabulatorScript = document.createElement('script');
+		tabulatorScript.type = 'text/javascript';
+		tabulatorScript.src = 'js/vendor/tabulator/tabulator.min.js';
+		tabulatorScript.onload = function()
 		{
-			console.warn('SEAF Tabulator host preload failed', e);
-		}
-		catch (ignored)
+			resolve();
+		};
+		tabulatorScript.onerror = function()
 		{
-			// no-op
-		}
+			reject(new Error('Failed to load Tabulator host asset (js/vendor/tabulator/tabulator.min.js)'));
+		};
+		document.head.appendChild(tabulatorScript);
+	});
+
+	if (typeof window.Tabulator !== 'function')
+	{
+		throw new Error('Tabulator host script loaded but window.Tabulator is unavailable');
 	}
 }
 
@@ -171,8 +175,6 @@ function ensureSeafTabulatorHost()
 	
 	App.main = async function()
 	{
-		ensureSeafTabulatorHost();
-
 		// Set AutoSave delay
 		var draftSaveDelay = mxSettings.getDraftSaveDelay();
 		
@@ -267,6 +269,15 @@ function ensureSeafTabulatorHost()
 			}
 			else
 			{
+				try
+				{
+					await ensureSeafTabulatorHost();
+				}
+				catch (eTab)
+				{
+					EditorUi.debug('App.main', 'SEAF Tabulator host preload failed', eTab);
+				}
+
 				for (var i = 0; i < plugins.length; i++)
 				{
 					try

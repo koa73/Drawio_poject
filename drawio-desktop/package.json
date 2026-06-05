@@ -1,6 +1,6 @@
 {
   "name": "draw.io",
-  "version": "29.6.10-a59",
+  "version": "29.6.10-a62",
   "description": "draw.io desktop",
   "exports": "./src/main/electron.js",
   "type": "module",
@@ -22,19 +22,19 @@
     "test:all-add-layer-routing": "node ./scripts/test-all-add-layer-routing.mjs",
     "gate:legacy-removal": "node ./scripts/legacy-removal-gate.mjs",
     "sync": "node ./sync.cjs",
-    "pre-release-win": "node ./verify-seaf-minimal-stage.cjs",
+    "pre-release-win": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
     "release-win": "electron-builder --config electron-builder-win.json --publish always",
-    "pre-release-win32": "node ./verify-seaf-minimal-stage.cjs",
+    "pre-release-win32": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
     "release-win32": "electron-builder --config electron-builder-win32.json --publish always",
-    "pre-release-win-arm64": "node ./verify-seaf-minimal-stage.cjs",
+    "pre-release-win-arm64": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
     "release-win-arm64": "electron-builder --config electron-builder-win-arm64.json --publish always",
-    "pre-release-appx": "node ./verify-seaf-minimal-stage.cjs",
+    "pre-release-appx": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
     "release-appx": "electron-builder --config electron-builder-appx.json --publish always",
-    "pre-release-linux": "node ./verify-seaf-minimal-stage.cjs",
+    "pre-release-linux": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
     "release-linux": "electron-builder --config electron-builder-linux-mac.json --publish always",
-    "pre-release-linux-local": "node ./verify-seaf-minimal-stage.cjs",
-    "release-linux-local": "electron-builder --config electron-builder-linux-mac.json --publish never",
-    "pre-release-snap": "node ./verify-seaf-minimal-stage.cjs",
+    "pre-release-linux-local": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
+    "release-linux-local": "electron-builder --config electron-builder-linux-mac.json --publish never --linux deb --x64",
+    "pre-release-snap": "node ./verify-seaf-tabulator-host.cjs && node ./verify-seaf-minimal-stage.cjs",
     "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
   },
   "repository": {
@@ -78,10 +78,10 @@
     "quicklookjs": "^1.0.1",
     "sumchecker": "^3.0.1"
   },
-    "publish": {
-      "provider": "github",
-      "owner": "koa73",
-      "repo": "drawio_seaf_ext",
-      "releaseType": "release"
-    }
+  "publish": {
+    "provider": "github",
+    "owner": "koa73",
+    "repo": "drawio_seaf_ext",
+    "releaseType": "release"
+  }
 }
