@@ -97,6 +97,29 @@ The `prepare-release` workflow automates:
   - `outdated-report.txt`
 - Job summary with version details and audit results
 
+### 4.1.1 SEAF Runtime Release Asset (Public HTTPS feed)
+
+Desktop runtime updates fetch a runtime archive from public GitHub Releases (no SSH key on client).
+
+Config source:
+- `drawio-desktop/seaf-minimal-stage/seaf_plugin/conf/plugin.yaml`
+
+Required update keys:
+- `update.mode: github_release`
+- `update.repo: owner/repo` (public repository with runtime release assets)
+- `update.assetName: seaf-plugin-runtime.tar.gz`
+- `update.tag: latest` (or explicit tag)
+- `update.apiBaseUrl: https://api.github.com`
+
+Runtime release asset procedure:
+1. Build runtime package in runtime repository.
+2. Upload `seaf-plugin-runtime.tar.gz` to a GitHub Release in `update.repo`.
+3. Verify `GET /repos/{owner}/{repo}/releases/latest` resolves successfully (no `404 Not Found`).
+4. Verify the desktop `update.assetName` matches the uploaded filename.
+5. Run `npm run test:seaf-stability` before desktop release publish.
+
+UI update smoke (`SEAF -> Обновить плагин`) must be executed only after runtime release publication is confirmed in step 3.
+
 ### 4.2 Pre-Release Verification
 
 Before triggering the workflow:

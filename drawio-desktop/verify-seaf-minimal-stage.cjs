@@ -7,8 +7,7 @@ const requiredPaths = [
 	path.join(stageDir, 'seaf.plugin.js'),
 	path.join(stageDir, 'seaf_plugin'),
 	path.join(stageDir, 'seaf_plugin', 'conf', 'plugin.yaml'),
-	path.join(stageDir, 'seaf_plugin', 'runtime', 'version.json'),
-	path.join(stageDir, 'seaf_plugin', 'keys')
+	path.join(stageDir, 'seaf_plugin', 'runtime', 'version.json')
 ];
 
 const missing = requiredPaths.filter((p) => !fs.existsSync(p));
@@ -21,6 +20,14 @@ if (missing.length > 0)
 	{
 		console.error(`  missing: ${item}`);
 	}
+	process.exit(1);
+}
+
+const forbiddenPath = path.join(stageDir, 'seaf_plugin', 'keys');
+if (fs.existsSync(forbiddenPath))
+{
+	console.error('[SEAF packaging guard] minimal-stage contains forbidden legacy artifacts.');
+	console.error(`  forbidden: ${forbiddenPath}`);
 	process.exit(1);
 }
 

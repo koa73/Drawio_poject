@@ -51,6 +51,61 @@ async function testPluginContracts()
 		'localized title contract missing');
 }
 
+async function testRuntimeUpdateContracts()
+{
+	const servicePath = path.join(repoRoot, 'drawio-desktop', 'src', 'main', 'seaf', 'seafPluginService.js');
+	const electronMainPath = path.join(repoRoot, 'drawio-desktop', 'src', 'main', 'electron.js');
+	const runtimeConfigPath = path.join(
+		repoRoot,
+		'drawio-desktop',
+		'seaf-minimal-stage',
+		'seaf_plugin',
+		'conf',
+		'plugin.yaml'
+	);
+	const runtimeKeysPath = path.join(
+		repoRoot,
+		'drawio-desktop',
+		'seaf-minimal-stage',
+		'seaf_plugin',
+		'keys'
+	);
+
+	const [serviceText, runtimeConfigText, electronMainText] = await Promise.all([
+		fs.readFile(servicePath, 'utf8'),
+		fs.readFile(runtimeConfigPath, 'utf8'),
+		fs.readFile(electronMainPath, 'utf8')
+	]);
+
+	assert(runtimeConfigText.includes('mode: github_release'),
+		'runtime update contract mismatch: expected mode github_release');
+	assert(runtimeConfigText.includes('repo: koa73/seaf-plugin-runtime'),
+		'runtime update contract mismatch: expected public repo');
+	assert(runtimeConfigText.includes('assetName: seaf-plugin-runtime.tar.gz'),
+		'runtime update contract mismatch: expected assetName');
+	assert(!runtimeConfigText.includes('gitRepoSsh'),
+		'runtime update contract mismatch: legacy gitRepoSsh must be removed');
+	assert(!runtimeConfigText.includes('privateKeyPath'),
+		'runtime update contract mismatch: legacy privateKeyPath must be removed');
+	assert(!(await fs.stat(runtimeKeysPath).then(() => true).catch(() => false)),
+		'runtime update contract mismatch: legacy keys directory must be removed from minimal-stage');
+
+	assert(serviceText.includes('Only github_release is allowed'),
+		'service contract mismatch: expected github_release mode validation');
+	assert(serviceText.includes('fetchArchiveFromGithubRelease'),
+		'service contract mismatch: expected GitHub release fetch flow');
+	assert(serviceText.includes('Не задан update.repo в plugin.yaml'),
+		'service contract mismatch: expected repo validation error');
+	assert(serviceText.includes('Asset "'),
+		'service contract mismatch: expected asset-not-found validation');
+	assert(!serviceText.includes('Only ssh_git is allowed'),
+		'service contract mismatch: legacy ssh_git mode message must be removed');
+	assert(!electronMainText.includes('key copied'),
+		'electron bootstrap contract mismatch: legacy key copy path must be removed');
+	assert(!electronMainText.includes('keysDir'),
+		'electron bootstrap contract mismatch: legacy keysDir references must be removed');
+}
+
 async function testPythonExecutableScenarios()
 {
 	const scriptsRoot = path.join(repoRoot, 'seaf-plugin-runtime', 'python', 'scripts');
@@ -92,6 +147,7 @@ async function main()
 {
 	testMergeContract();
 	await testPluginContracts();
+	await testRuntimeUpdateContracts();
 	await testPythonExecutableScenarios();
 	console.log('SEAF stability smoke: PASS');
 }

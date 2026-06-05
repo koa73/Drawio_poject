@@ -3002,8 +3002,7 @@ function getSeafRuntimeDefaults()
 	return {
 		defaultsDir,
 		pluginFile: path.join(defaultsDir, seafPluginFileName),
-		runtimeDir: path.join(defaultsDir, seafRuntimeDirName),
-		keysDir: path.join(defaultsDir, seafRuntimeDirName, 'keys')
+		runtimeDir: path.join(defaultsDir, seafRuntimeDirName)
 	};
 }
 
@@ -3055,7 +3054,6 @@ async function ensureSeafRuntimeInstalled()
 {
 	const defaults = getSeafRuntimeDefaults();
 	const targets = getSeafRuntimeTargets();
-	const targetKeysDir = path.join(targets.runtimeDir, 'keys');
 	const details = {
 		defaults,
 		targets
@@ -3109,44 +3107,10 @@ async function ensureSeafRuntimeInstalled()
 			to: targets.runtimeDir
 		});
 	}
-	else if (fs.existsSync(defaults.keysDir))
-	{
-		await fsProm.mkdir(targetKeysDir, {recursive: true});
-		const keyEntries = await fsProm.readdir(defaults.keysDir, {withFileTypes: true});
-		for (const entry of keyEntries)
-		{
-			if (!entry.isFile())
-			{
-				continue;
-			}
-
-			const sourcePath = path.join(defaults.keysDir, entry.name);
-			const targetPath = path.join(targetKeysDir, entry.name);
-			if (!fs.existsSync(targetPath))
-			{
-				await fsProm.copyFile(sourcePath, targetPath);
-				console.log('[SEAF bootstrap] key copied', {
-					from: sourcePath,
-					to: targetPath
-				});
-			}
-			if (!entry.name.endsWith('.pub'))
-			{
-				await fsProm.chmod(targetPath, 0o600).catch(() => {});
-			}
-		}
-	}
-	else
-	{
-		console.warn('[SEAF bootstrap] defaults keys directory is missing', {
-			keysDir: defaults.keysDir
-		});
-	}
 
 	const verification = {
 		pluginFileExists: fs.existsSync(targets.pluginFile),
-		runtimeDirExists: fs.existsSync(targets.runtimeDir),
-		keysDirExists: fs.existsSync(targetKeysDir)
+		runtimeDirExists: fs.existsSync(targets.runtimeDir)
 	};
 
 	console.log('[SEAF bootstrap] completed', verification);

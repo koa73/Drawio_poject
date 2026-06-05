@@ -36,6 +36,7 @@ To run this:
 3. `npm start` _in the root directory of this repo_ runs the app. For debugging, use `npm start --enable-logging`.
 4. `npm run test:seaf-gui` runs a lightweight GUI smoke test for SEAF interactive terminal IPC flow.
 5. `npm run test:seaf-gui:xvfb` runs the same smoke test through `xvfb-run` for headless CI-like environments.
+6. `npm run test:seaf-stability` validates SEAF runtime update contracts, env merge rules, and Python runtime probing.
 
 Note: If a symlink is used to refer to drawio repo (instead of the submodule), then symlink the `node_modules` directory inside `drawio/src/main/webapp` also.
 
@@ -47,6 +48,25 @@ To release:
 5. Re-upload signed file as `draw.io-windows-installer-x.y.z.exe` and `draw.io-windows-no-installer-x.y.z.exe`
 6. Add release notes
 7. Publish release
+
+SEAF Runtime Update (GitHub Releases over HTTPS)
+------------------------------------------------
+
+SEAF runtime updates are resolved from a public GitHub Releases feed over HTTPS.
+
+- Runtime update defaults are shipped in `drawio-desktop/seaf-minimal-stage/seaf_plugin/conf/plugin.yaml`
+- Required update keys:
+  - `update.mode: github_release`
+  - `update.repo: owner/repo`
+  - `update.assetName: seaf-plugin-runtime.tar.gz`
+  - `update.tag: latest` (or an explicit tag)
+  - `update.apiBaseUrl: https://api.github.com`
+- No SSH private key is required on client machines.
+
+Publishing a new runtime update:
+1. Build the runtime archive in the runtime repository (`seaf-plugin-runtime.tar.gz`).
+2. Upload that archive as a Release asset in the configured `update.repo`.
+3. Keep `update.assetName` unchanged so desktop can resolve the asset automatically.
 
 *Note*: In Windows release, when using both x64 and is32 as arch, the result is one big file with both archs. This is why we split them.
 

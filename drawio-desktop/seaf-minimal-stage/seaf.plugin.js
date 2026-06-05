@@ -1,6 +1,6 @@
 /**
  * SEAF minimal plugin for draw.io desktop bootstrap.
- * Runtime script version: 0.0.7
+ * Runtime script version: 0.0.9
  */
 Draw.loadPlugin(function(ui)
 {

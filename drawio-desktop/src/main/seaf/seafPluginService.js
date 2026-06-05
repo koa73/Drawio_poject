@@ -2439,136 +2439,136 @@ async function readRuntimeVersionFromDir(runtimeDir)
 	}
 }
 
-async function ensureGitAvailable(logCfg)
+function parseGithubRepoName(repoRaw)
 {
-	let result = null;
-	try
+	const cleaned = String(repoRaw || '').trim()
+		.replace(/^https:\/\/github\.com\//i, '')
+		.replace(/^github\.com\//i, '')
+		.replace(/\/+$/, '')
+		.replace(/\.git$/i, '');
+	const parts = cleaned.split('/').filter(Boolean);
+	if (parts.length !== 2)
 	{
-		result = await runProcessCapture('git', ['--version']);
+		throw new Error(`Некорректный update.repo: "${repoRaw}". Ожидается формат owner/repo`);
 	}
-	catch (e)
-	{
-		await writeLog(logCfg, 'error', 'git client not installed', {
-			error: e && e.message ? e.message : String(e)
-		});
-		throw new Error('На ПК не установлен клиент git');
-	}
-	await writeLog(logCfg, result.code === 0 ? 'info' : 'error', 'git --version executed', {
-		code: result.code,
-		stdout: trimOutput(result.stdout),
-		stderr: trimOutput(result.stderr)
-	});
-	if (result.code !== 0)
-	{
-		throw new Error('На ПК не установлен клиент git');
-	}
+	return {
+		owner: parts[0],
+		repo: parts[1]
+	};
 }
 
-async function validateUpdatePrerequisites({cfgPath, updateCfg, privateKeyPath, logCfg})
+function normalizeGithubTag(tagRaw)
 {
-	const assetPath = String(updateCfg.assetPath || '').trim();
-	if (assetPath.length === 0)
-	{
-		throw new Error('Не задан путь к asset update.assetPath');
-	}
-
-	if (assetPath.includes('..') || assetPath.startsWith('/'))
-	{
-		throw new Error(`Некорректный update.assetPath: ${assetPath}`);
-	}
-
-	if (!privateKeyPath)
-	{
-		throw new Error('Не задан путь к приватному ключу update.ssh.privateKeyPath');
-	}
-
-	await fsProm.access(privateKeyPath, fs.constants.R_OK)
-		.catch(() => Promise.reject(new Error(`Не найден приватный ключ SSH: ${privateKeyPath}`)));
-
-	const keyStat = await fsProm.stat(privateKeyPath);
-	const keyMode = keyStat.mode & 0o777;
-	if ((keyMode & 0o077) !== 0)
-	{
-		await writeLog(logCfg, 'warn', 'Private key has overly broad permissions', {
-			privateKeyPath,
-			mode: keyMode.toString(8)
-		});
-	}
-
-	const publicKeyPath = resolveMaybeRelative(cfgPath, updateCfg?.ssh?.publicKeyPath);
-	if (publicKeyPath)
-	{
-		await fsProm.access(publicKeyPath, fs.constants.R_OK)
-			.catch(() => Promise.reject(new Error(`Не найден публичный ключ SSH: ${publicKeyPath}`)));
-	}
+	const tag = String(tagRaw || '').trim();
+	return tag.length === 0 ? 'latest' : tag;
 }
 
-async function createGitSshWrapper(tempRoot, privateKeyPath)
+function joinApiBaseUrl(apiBaseUrl, relativePath)
 {
-	const wrapperPath = path.join(tempRoot, 'git_ssh_wrapper.sh');
-	const escaped = privateKeyPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-	const script = `#!/usr/bin/env sh\nexec ssh -i "${escaped}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "$@"\n`;
-	await fsProm.writeFile(wrapperPath, script, 'utf8');
-	await fsProm.chmod(wrapperPath, 0o700);
-	return wrapperPath;
+	const trimmed = String(apiBaseUrl || '').trim().replace(/\/+$/, '');
+	return `${trimmed}${relativePath}`;
 }
 
-async function fetchArchiveFromSshGit({
-	repoSsh,
-	ref,
-	assetPath,
-	tempRoot,
-	gitSshCommand,
+function ensureRuntimeAssetName(assetNameRaw)
+{
+	const assetName = String(assetNameRaw || '').trim();
+	if (assetName.length === 0)
+	{
+		throw new Error('Не задан update.assetName в plugin.yaml');
+	}
+	if (assetName.includes('/') || assetName.includes('\\'))
+	{
+		throw new Error(`Некорректный update.assetName: ${assetName}`);
+	}
+	return assetName;
+}
+
+async function resolveGithubReleaseAsset({
+	apiBaseUrl,
+	owner,
+	repo,
+	tag,
+	assetName,
 	logCfg
 })
 {
-	const env = Object.assign({}, process.env, {
-		GIT_SSH_COMMAND: gitSshCommand
-	});
-	const lsRemote = await runProcessCapture('git', ['ls-remote', repoSsh, ref], {env, cwd: tempRoot});
-	await writeLog(logCfg, lsRemote.code === 0 ? 'info' : 'error', 'git ls-remote finished', {
-		repoSsh,
-		ref,
-		code: lsRemote.code,
-		stdout: trimOutput(lsRemote.stdout),
-		stderr: trimOutput(lsRemote.stderr)
-	});
-	if (lsRemote.code !== 0)
-	{
-		throw new Error(`Нет доступа к репозиторию по SSH (${repoSsh}, ref=${ref}): ${trimOutput(lsRemote.stderr) || 'unknown error'}`);
-	}
-
-	const cloneDir = path.join(tempRoot, 'repo');
-	const clone = await runProcessCapture('git', ['clone', '--depth', '1', '--branch', ref, repoSsh, cloneDir], {env, cwd: tempRoot});
-	await writeLog(logCfg, clone.code === 0 ? 'info' : 'error', 'git clone finished', {
-		repoSsh,
-		ref,
-		code: clone.code,
-		stdout: trimOutput(clone.stdout),
-		stderr: trimOutput(clone.stderr)
-	});
-	if (clone.code !== 0)
-	{
-		throw new Error(`Не удалось скачать обновление из репозитория (${repoSsh}, ref=${ref}): ${trimOutput(clone.stderr) || 'unknown error'}`);
-	}
-
-	const sourceArchive = path.resolve(cloneDir, assetPath);
+	const endpoint = tag === 'latest' ?
+		joinApiBaseUrl(apiBaseUrl, `/repos/${owner}/${repo}/releases/latest`) :
+		joinApiBaseUrl(apiBaseUrl, `/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`);
+	let release;
 	try
 	{
-		await fsProm.access(sourceArchive, fs.constants.R_OK);
+		release = await httpGetJson(endpoint);
 	}
 	catch (e)
 	{
-		throw new Error(`Файл обновления не найден в репозитории: ${assetPath}`);
+		const rawMessage = String(e && e.message ? e.message : e);
+		if (rawMessage.startsWith('HTTP 404:'))
+		{
+			const releaseRef = tag === 'latest' ? 'latest' : `tag=${tag}`;
+			throw new Error(`В репозитории ${owner}/${repo} не найден GitHub Release (${releaseRef}). Опубликуйте asset "${assetName}" и повторите обновление.`);
+		}
+		throw e;
 	}
+	const assets = Array.isArray(release.assets) ? release.assets : [];
+	const asset = assets.find((item) => item && String(item.name || '') === assetName);
+	if (!asset || !asset.url)
+	{
+		throw new Error(`Asset "${assetName}" не найден в release (${owner}/${repo}, tag=${tag})`);
+	}
+	await writeLog(logCfg, 'info', 'GitHub release asset resolved', {
+		repo: `${owner}/${repo}`,
+		tag,
+		assetName,
+		releaseId: release.id || null,
+		releaseName: release.name || null
+	});
+	return {
+		assetApiUrl: asset.url,
+		assetName
+	};
+}
 
-	const archivePath = path.join(tempRoot, path.basename(assetPath));
-	await fsProm.copyFile(sourceArchive, archivePath);
-	await writeLog(logCfg, 'info', 'SSH update asset prepared', {
-		assetPath,
+async function fetchArchiveFromGithubRelease({
+	apiBaseUrl,
+	repo,
+	tag,
+	assetName,
+	tempRoot,
+	logCfg
+})
+{
+	const parsedRepo = parseGithubRepoName(repo);
+	const normalizedTag = normalizeGithubTag(tag);
+	const normalizedAssetName = ensureRuntimeAssetName(assetName);
+	const resolved = await resolveGithubReleaseAsset({
+		apiBaseUrl,
+		owner: parsedRepo.owner,
+		repo: parsedRepo.repo,
+		tag: normalizedTag,
+		assetName: normalizedAssetName,
+		logCfg
+	});
+	const archivePath = path.join(tempRoot, normalizedAssetName);
+	await downloadToFile(resolved.assetApiUrl, archivePath, {
+		'Accept': 'application/octet-stream'
+	});
+	await writeLog(logCfg, 'info', 'GitHub release asset downloaded', {
+		repo: `${parsedRepo.owner}/${parsedRepo.repo}`,
+		tag: normalizedTag,
+		assetName: normalizedAssetName,
 		archivePath
 	});
-	return archivePath;
+	return {
+		archivePath,
+		source: {
+			mode: 'github_release',
+			repo: `${parsedRepo.owner}/${parsedRepo.repo}`,
+			tag: normalizedTag,
+			assetName: normalizedAssetName,
+			apiBaseUrl
+		}
+	};
 }
 
 function ensureHttps(urlString)
@@ -2894,7 +2894,7 @@ async function cleanupLegacyNestedRuntime(pluginsDir, logCfg)
 	}
 }
 
-async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
+async function runNativeRuntimeUpdate({loaded, commandId, onProgress})
 {
 	const reportProgress = (progress, phase, message) =>
 	{
@@ -2912,38 +2912,30 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 	const configDir = path.dirname(cfgPath);
 	const pluginsDir = path.resolve(configDir, '..', '..');
 	const updateCfg = (loaded.config && typeof loaded.config.update === 'object') ? loaded.config.update : {};
-	const mode = String(updateCfg.mode || 'ssh_git').trim();
+	const mode = String(updateCfg.mode || 'github_release').trim();
 
 	if (updateCfg.enabled === false)
 	{
 		throw new Error('SEAF runtime update is disabled in plugin.yaml (update.enabled=false)');
 	}
 
-	if (mode !== 'ssh_git')
+	if (mode !== 'github_release')
 	{
-		throw new Error(`Unsupported update.mode: ${mode}. Only ssh_git is allowed`);
+		throw new Error(`Unsupported update.mode: ${mode}. Only github_release is allowed`);
 	}
 
-	const repoSsh = String(updateCfg.gitRepoSsh || '').trim();
-	const ref = String(updateCfg.gitRef || 'master').trim() || 'master';
-	const assetPath = String(updateCfg.assetPath || 'release/out/seaf-plugin-runtime.tar.gz').trim();
+	const repo = String(updateCfg.repo || '').trim();
+	const tag = normalizeGithubTag(updateCfg.tag || 'latest');
+	const assetName = ensureRuntimeAssetName(updateCfg.assetName || 'seaf-plugin-runtime.tar.gz');
+	const apiBaseUrl = String(updateCfg.apiBaseUrl || 'https://api.github.com').trim();
 	const expectedMinVersion = String(updateCfg.expectedMinVersion || '').trim();
-	const privateKeyPath = resolveMaybeRelative(cfgPath, updateCfg?.ssh?.privateKeyPath);
 
-	if (!repoSsh)
+	if (!repo)
 	{
-		throw new Error('Не задан update.gitRepoSsh в plugin.yaml');
+		throw new Error('Не задан update.repo в plugin.yaml');
 	}
-
-	await validateUpdatePrerequisites({
-		cfgPath,
-		updateCfg,
-		privateKeyPath,
-		logCfg: loaded.logCfg
-	});
 	reportProgress(5, 'precheck', 'Проверка параметров обновления');
 
-	await ensureGitAvailable(loaded.logCfg);
 	await cleanupLegacyNestedRuntime(pluginsDir, loaded.logCfg);
 	reportProgress(20, 'precheck_done', 'Проверки завершены');
 
@@ -2953,16 +2945,16 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 
 	try
 	{
-		const gitSshWrapper = await createGitSshWrapper(tempRoot, privateKeyPath);
 		reportProgress(30, 'fetch', 'Загрузка архива обновления');
-		const archivePath = await fetchArchiveFromSshGit({
-			repoSsh,
-			ref,
-			assetPath,
+		const fetched = await fetchArchiveFromGithubRelease({
+			apiBaseUrl,
+			repo,
+			tag,
+			assetName,
 			tempRoot,
-			gitSshCommand: gitSshWrapper,
 			logCfg: loaded.logCfg
 		});
+		const archivePath = fetched.archivePath;
 		const extractDir = path.join(tempRoot, 'extract');
 		await fsProm.mkdir(extractDir, {recursive: true});
 		reportProgress(55, 'extract', 'Распаковка runtime архива');
@@ -2999,12 +2991,7 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 					status: 'already_up_to_date',
 					requiresRestart: false,
 					version: beforeVersion,
-					source: {
-						mode: 'ssh_git',
-						repoSsh,
-						ref,
-						assetPath
-					}
+					source: fetched.source
 				},
 				commands: []
 			};
@@ -3058,12 +3045,7 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 		await writeLog(loaded.logCfg, 'info', 'Runtime updated successfully', {
 			commandId,
 			version: finalVersion,
-			source: {
-				mode: 'ssh_git',
-				repoSsh,
-				ref,
-				assetPath
-			}
+			source: fetched.source
 		});
 
 		const degraded = !!(runtimeHealth && runtimeHealth.ok === false);
@@ -3082,12 +3064,7 @@ async function runNativeSshRuntimeUpdate({loaded, commandId, onProgress})
 				runtimeApply: {
 					migratedVenv: !!(applyInfo && applyInfo.migratedVenv)
 				},
-				source: {
-					mode: 'ssh_git',
-					repoSsh,
-					ref,
-					assetPath
-				}
+				source: fetched.source
 			},
 			commands: []
 		};
@@ -3324,7 +3301,7 @@ export function createSeafPluginService({getAppDataFolder})
 				let result = null;
 				try
 				{
-					result = await runNativeSshRuntimeUpdate({
+					result = await runNativeRuntimeUpdate({
 						loaded,
 						commandId: command.id
 					});
@@ -3590,7 +3567,7 @@ export function createSeafPluginService({getAppDataFolder})
 
 			try
 			{
-				runNativeSshRuntimeUpdate({
+				runNativeRuntimeUpdate({
 					loaded,
 					commandId: 'seafUpdatePlugin',
 					onProgress: (progressEvent) =>

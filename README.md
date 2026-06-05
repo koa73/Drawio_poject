@@ -2,7 +2,7 @@
 
 Этот репозиторий содержит доработки к базовому дистрибутиву draw.io для интеграции SEAF runtime, включая:
 - bootstrap минимального runtime в составе инсталлятора drawio;
-- обновление до полного runtime из репозитория;
+- обновление до полного runtime из публичного GitHub Releases по HTTPS (без приватного SSH-ключа на клиенте);
 - расширение меню и взаимодействие через IPC.
 - schema-driven меню `SEAF -> Edit Config` для редактирования `env.yaml` через стандартные формы draw.io.
 - диалог `SEAF -> Edit Config` с контент-ориентированной высотой, симметричными внутренними отступами и silent-success поведением (ошибки показываются, успешное сохранение без popup).
@@ -118,8 +118,8 @@ Drawio_poject/
 | `drawio-desktop/verify-seaf-minimal-stage.cjs` | Fail-fast проверка наличия minimal runtime stage перед релизной сборкой desktop | Проверка `release/out/minimal-stage` и обязательных файлов |
 | `drawio-desktop/scripts/gui/seaf-terminal-smoke-main.cjs` | GUI smoke harness для проверки IPC-потока interactive terminal | Тестовый BrowserWindow + mock handlers `getSeafInteractiveTerminalSnapshot/writeSeafInteractiveTerminalInput/resizeSeafInteractiveTerminal` |
 | `drawio-desktop/scripts/gui/seaf-terminal-ipc-smoke-renderer.js` | Renderer часть GUI smoke harness | Проверка доставки snapshot/data/exit событий и базовых IPC roundtrip |
-| `drawio-desktop/electron-builder-linux-mac.json` | Встраивание minimal runtime в Linux/macOS пакет | `extraResources.from = ../seaf-plugin-runtime/release/out/minimal-stage` |
-| `drawio-desktop/electron-builder-win.json` | Встраивание minimal runtime в Windows пакет | `extraResources.from = ../seaf-plugin-runtime/release/out/minimal-stage` |
+| `drawio-desktop/electron-builder-linux-mac.json` | Встраивание minimal runtime в Linux/macOS пакет | `extraResources.from = ./seaf-minimal-stage` |
+| `drawio-desktop/electron-builder-win.json` | Встраивание minimal runtime в Windows пакет | `extraResources.from = ./seaf-minimal-stage` |
 | `seaf-plugin-runtime/plugin/seaf.plugin.js` | Full renderer plugin: меню, вызовы IPC, индикаторы, update | `registerMainMenu()`, `registerActions()`, `executeSystemUpdate()`, `pollAsyncJob()`, `detectRuntimeVersion()` |
 | `seaf-plugin-runtime/conf/plugin.yaml` | Core full runtime конфигурация | `plugin.*`, `python.*`, `logging.*`, `update.*`, `includes.*` |
 | `seaf-plugin-runtime/conf/main_menu.yaml` | Конфиг главного меню | Определение команд и `menu.main.*` |
@@ -146,8 +146,8 @@ Drawio_poject/
 |---|---|---|---|
 | Bootstrap минимального runtime из пакета drawio | Main-process desktop | `drawio-desktop/src/main/electron.js` | `ensureSeafRuntimeInstalled()` |
 | Диагностические bootstrap-логи и причины отказа | Main-process desktop | `drawio-desktop/src/main/electron.js` | `[SEAF bootstrap] ...` |
-| Idempotent перенос ключей в пользовательский runtime | Main-process desktop | `drawio-desktop/src/main/electron.js` | часть `ensureSeafRuntimeInstalled()` |
-| Native update runtime по `ssh_git` | SEAF service | `drawio-desktop/src/main/seaf/seafPluginService.js` | `runNativeSshRuntimeUpdate()`, `updateRuntime()` |
+| Bootstrap runtime без SSH-ключей | Main-process desktop | `drawio-desktop/src/main/electron.js` | `ensureSeafRuntimeInstalled()` копирует только runtime assets |
+| Native update runtime по `github_release` (HTTPS) | SEAF service | `drawio-desktop/src/main/seaf/seafPluginService.js` | `runNativeRuntimeUpdate()`, `updateRuntime()` |
 | Async update runtime с процентным прогрессом | SEAF service + renderer | `seafPluginService.js`, `plugin/seaf.plugin.js`, `minimal-runtime/seaf.plugin.js` | `updateRuntime()` async, `pollSeafPluginJob`, percent indicator |
 | Синхронный интерактивный terminal-режим для Python | Desktop main-process + renderer plugin + terminal window | `electron.js`, `seafPluginService.js`, `plugin/seaf.plugin.js`, `src/main/seaf/terminal-window.*` | modal terminal-window, `node-pty`, `xterm`, блокировка editor до закрытия окна |
 | Smoke GUI-проверка interactive terminal IPC | Test harness (desktop scripts) | `drawio-desktop/scripts/gui/*` | `npm run test:seaf-gui`, `npm run test:seaf-gui:xvfb` |

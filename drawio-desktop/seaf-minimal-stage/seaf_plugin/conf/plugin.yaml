@@ -3,7 +3,7 @@ plugin:
   id: seaf_plugin
   name: SEAF Plugin
   description: Minimal bootstrap plugin runtime
-  runtimeVersion: 0.0.7
+  runtimeVersion: 0.0.9
 logging:
   level: info
   extendedDebug: false
@@ -12,17 +12,11 @@ logging:
   filePath: ../log/seaf-plugin.log
 update:
   enabled: true
-  mode: ssh_git
-  repo: ""
-  gitRepoSsh: git@github.com:koa73/seaf-plugin-runtime.git
-  gitRef: master
-  assetPath: release/out/seaf-plugin-runtime.tar.gz
+  mode: github_release
+  repo: koa73/seaf-plugin-runtime
   expectedMinVersion: 0.2.6
-  ssh:
-    privateKeyPath: ../keys/seaf-plugin-runtime
-    publicKeyPath: ../keys/seaf-plugin-runtime.pub
   assetName: seaf-plugin-runtime.tar.gz
-  tag: ""
+  tag: latest
   apiBaseUrl: https://api.github.com
 commands:
   - id: seafPlaceholderNoop

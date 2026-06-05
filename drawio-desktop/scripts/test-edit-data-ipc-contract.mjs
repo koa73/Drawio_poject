@@ -31,6 +31,8 @@ async function main()
 		[electronSrc, 'ret = await seafPluginService.getStencilConfig(args);'],
 		[serviceSrc, 'async function readStencilConfigInternal(configPath)'],
 		[serviceSrc, 'async getStencilConfig(args)'],
+		[serviceSrc, 'Only github_release is allowed'],
+		[serviceSrc, 'fetchArchiveFromGithubRelease'],
 		[runtimeSrc, "action: 'getSeafStencilConfig'"],
 		[runtimeSrc, "source: 'getSeafStencilConfig'"],
 		[runtimeSrc, 'function getDataHiddenForSchema(schema)'],
@@ -43,6 +45,10 @@ async function main()
 		{
 			fail(`missing IPC contract element: ${needle}`);
 		}
+	}
+	if (serviceSrc.includes('Only ssh_git is allowed'))
+	{
+		fail('legacy ssh_git update mode reference must be removed');
 	}
 
 	console.log('[test-edit-data-ipc-contract] PASS');
