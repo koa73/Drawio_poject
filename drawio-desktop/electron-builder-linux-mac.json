@@ -18,7 +18,9 @@
   ],
   "npmRebuild": false,
   "publish": {
-      "provider": "github"
+      "provider": "github",
+      "owner": "koa73",
+      "repo": "Drawio_poject"
   },
   "mac": {
   	"hardenedRuntime": true,

@@ -229,15 +229,15 @@ export default async function notarizing(context) {
     return;
   }
 
+  if (!process.env.APPLEID || !process.env.APPLEIDPASS || !process.env.APPLE_TEAM_ID) {
+    console.log('Skipping Quick Look signing and notarization: Apple credentials are not configured');
+    return;
+  }
+
   const appPath = `${appOutDir}/${appName}.app`;
 
   setupQuickLookExtension(appPath, appVersion);
   signQuickLookExtension(appPath);
-
-  if (!process.env.APPLEID || !process.env.APPLEIDPASS || !process.env.APPLE_TEAM_ID) {
-    console.log('Skipping notarization: Apple credentials are not configured');
-    return;
-  }
 
   return await notarize({
     tool: "notarytool",

@@ -48,7 +48,8 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path drawio) { Remove-Item drawio -Force -Recurse }
-          New-Item -Path drawio -ItemType Junction -Target ..\drawio-standalone | Out-Null
+          $target = (Resolve-Path "..\drawio-standalone").Path
+          New-Item -Path drawio -ItemType Junction -Target $target | Out-Null
 
       - name: Set version from tag
         shell: node {0}
