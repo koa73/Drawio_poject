@@ -12,7 +12,7 @@
   },
   "extraResources": [
     {
-      "from": "../seaf-plugin-runtime/release/out/minimal-stage",
+      "from": "./seaf-minimal-stage",
       "to": "seaf-runtime-default"
     }
   ],

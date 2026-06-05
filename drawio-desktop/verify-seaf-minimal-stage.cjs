@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const stageDir = path.resolve(__dirname, '../seaf-plugin-runtime/release/out/minimal-stage');
+const stageDir = path.resolve(__dirname, './seaf-minimal-stage');
 const requiredPaths = [
 	path.join(stageDir, 'seaf.plugin.js'),
 	path.join(stageDir, 'seaf_plugin'),
@@ -16,8 +16,7 @@ const missing = requiredPaths.filter((p) => !fs.existsSync(p));
 if (missing.length > 0)
 {
 	console.error('[SEAF packaging guard] minimal-stage is missing required artifacts.');
-	console.error('[SEAF packaging guard] Please run:');
-	console.error('  /home/oleg/Drawio_poject/seaf-plugin-runtime/release/runtime/build-minimal-runtime.sh');
+	console.error('[SEAF packaging guard] Expected vendored files under drawio-desktop/seaf-minimal-stage.');
 	for (const item of missing)
 	{
 		console.error(`  missing: ${item}`);

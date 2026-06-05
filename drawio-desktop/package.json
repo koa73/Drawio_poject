@@ -81,7 +81,7 @@
   "publish": {
     "provider": "github",
     "owner": "koa73",
-    "repo": "drawio_seaf_ext",
+    "repo": "Drawio_poject",
     "releaseType": "release"
   }
 }
